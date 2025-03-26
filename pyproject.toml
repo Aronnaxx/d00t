@@ -1,54 +1,47 @@
 [project]
 name = "open_duck_vlm"
 version = "0.1.0"
-description = "VLM integration for controlling Open Duck robot in MuJoCo simulation"
+description = "VLM integration for Open Duck Robot"
 readme = "README.md"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
 requires-python = ">=3.8"
 dependencies = [
-    "numpy>=1.20.0",
-    "opencv-python>=4.5.0",
-    "onnxruntime>=1.12.0",
     "flask>=2.0.0",
-    "flask-cors>=3.0.0",
-    "mujoco>=2.3.0",
+    "Pillow>=9.0.0",
+    "numpy>=1.20.0",
     "requests>=2.25.0",
-    "pillow>=8.0.0",
-    "etils>=1.0.0"
+    "onnx>=1.12.0",
+    "onnxruntime>=1.12.0",
+    "opencv-python>=4.5.0",
+    "mujoco>=2.3.3",
 ]
+
+[project.scripts]
+ollama-run = "vlm_integration:main"
+external-run = "vlm_integration:main"
+interactive = "vlm_integration:main"
+ollama-manager = "ollama:main"
 
 [project.optional-dependencies]
 dev = [
+    "pytest>=7.0.0",
     "black>=23.0.0",
-    "pylint>=2.17.0",
+    "isort>=5.0.0",
 ]
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
-[tool.hatch.envs.default]
-dependencies = [
-    "mujoco>=2.3.0",
-]
-python = "3.8"
+[tool.black]
+line-length = 88
+target-version = ["py38"]
 
-[tool.hatch.envs.default.scripts]
-main = "python main.py"
-client = "python client.py"
-vlm-test = "python vlm_integration.py"
-# Run with Ollama
-ollama-run = "python vlm_integration.py --vlm-type=ollama --ollama-model=llava"
-# Run with external VLM
-external-run = "python vlm_integration.py --vlm-type=external --vlm-api={args}"
-# Run in interactive mode
-interactive = "python vlm_integration.py --interactive"
-
-[tool.hatch.metadata]
-allow-direct-references = true
-
-# Configure build to include all project modules
-[tool.hatch.build.targets.wheel]
-packages = ["playground", "client", "vlm_integration"]
+[tool.isort]
+profile = "black"
+multi_line_output = 3
 
 # Additional NVIDIA index - this will be used when installing with UV via:
 # uv pip install -e . --extra-index-url https://pypi.nvidia.com

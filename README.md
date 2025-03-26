@@ -1,396 +1,236 @@
 # Open Duck VLM Integration
 
-This project provides an API and client libraries to allow Vision Language Models (VLMs) to control the Open Duck robot in MuJoCo simulation. The system enables external AI systems to view the robot's environment through camera frames and send movement commands.
+This project integrates Vision Language Models (VLMs) with the Open Duck Robot, enabling natural language control of the duck robot in the MuJoCo simulation environment.
 
-## System Architecture
+## Project Overview
+
+The integration allows users to:
+1. Control the duck robot using natural language commands
+2. Use vision-language models to interpret the robot's surroundings
+3. Send appropriate commands based on visual input and language processing
+
+## Architecture
 
 ```mermaid
 graph TD
-    subgraph "MuJoCo Simulation"
-        M[MuJoCo Thread] -- renders --> CF[Camera Frames]
-        ONNX[ONNX Model] -- controls --> Robot[Duck Robot]
-        M -- steps simulation --> Robot
+    subgraph "VLM Integration"
+        A[VLM Duck Controller] --> B[Duck Robot Client]
+        A --> C1[External VLM API]
+        A --> C2[Local Ollama VLM]
+        C2 --> D[Ollama Manager]
     end
-    
-    subgraph "API Server"
-        Flask[Flask API Server] -- starts/manages --> M
-        Flask -- gets frames from --> CF
-        Flask -- sends commands to --> Robot
-        Flask -- exposes endpoints --> API[REST API Endpoints]
+    subgraph "Duck Robot API"
+        B --> E[API Server]
+        E --> F[MuJoCo Inference]
+        F --> G[ONNX Model]
     end
+    H[User] --> A
     
-    subgraph "Client Libraries"
-        PythonClient[Python Client]
-        CLITool[Command Line Tool]
-        VLMIntegration[VLM Integration]
-    end
-    
-    API -- consumed by --> PythonClient
-    PythonClient -- used by --> CLITool
-    PythonClient -- used by --> VLMIntegration
-    
-    subgraph "VLM Options"
-        OllamaVLM[Local Ollama]
-        ExternalVLM[External VLM API]
-    end
-    
-    VLMIntegration -- uses --> OllamaVLM
-    VLMIntegration -- uses --> ExternalVLM
-    OllamaVLM -- analyzes --> CF
-    ExternalVLM -- analyzes --> CF
-    OllamaVLM -- issues commands to --> Robot
-    ExternalVLM -- issues commands to --> Robot
+    style C1 stroke:#4285F4,stroke-width:2px
+    style C2 stroke:#34A853,stroke-width:2px
+    style D stroke:#34A853,stroke-width:2px
 ```
 
 ## Control Flow
 
 ```mermaid
 sequenceDiagram
-    participant VLM as VLM/LLM System
-    participant Client as Duck Client
-    participant API as API Server
+    participant User
+    participant VLM as VLM Duck Controller
+    participant Ollama as Ollama Manager
+    participant API as Duck Robot API
     participant MuJoCo as MuJoCo Simulation
+
+    User->>VLM: Launch with selected VLM type
     
-    VLM->>Client: Initialize simulation
-    Client->>API: POST /initialize
-    API->>MuJoCo: Start simulation thread
-    API-->>Client: Success response
-    Client-->>VLM: Simulation ready
-    
-    loop Control Loop
-        VLM->>Client: Request camera frame
-        Client->>API: GET /frame
-        API->>MuJoCo: Get current frame
-        MuJoCo-->>API: Return frame data
-        API-->>Client: Frame (base64 encoded)
-        Client-->>VLM: Processed frame
-        
-        Note over VLM: Process image and decide action
-        
-        VLM->>Client: Send command
-        Client->>API: POST /command
-        API->>MuJoCo: Update command queue
-        MuJoCo->>MuJoCo: Execute command
-        API-->>Client: Command received
-        Client-->>VLM: Command executed
+    alt Local Ollama VLM
+        VLM->>Ollama: Check if installed
+        Ollama->>Ollama: Install if needed
+        VLM->>Ollama: Start server
+        Ollama->>Ollama: Pull model if needed
+    else External VLM
+        VLM->>VLM: Configure external API client
     end
     
-    VLM->>Client: Shutdown simulation
-    Client->>API: POST /shutdown
-    API->>MuJoCo: Stop simulation thread
-    API-->>Client: Success response
-    Client-->>VLM: Simulation stopped
+    VLM->>API: Initialize simulation
+    API->>MuJoCo: Setup simulation environment
+    
+    loop Control Loop
+        VLM->>API: Get current frame
+        API->>MuJoCo: Capture frame
+        MuJoCo-->>API: Return frame
+        API-->>VLM: Return frame
+        
+        alt Local Ollama VLM
+            VLM->>Ollama: Query with image & prompt
+            Ollama-->>VLM: Return response
+        else External VLM
+            VLM->>External: Query with image & prompt
+            External-->>VLM: Return response
+        end
+        
+        VLM->>VLM: Process response to command
+        VLM->>API: Send command
+        API->>MuJoCo: Execute command
+    end
+    
+    User->>VLM: Stop simulation
+    VLM->>API: Shutdown
+    VLM->>Ollama: Stop server if started by us
 ```
 
 ## Natural Language Command Processing
 
 ```mermaid
-graph LR
-    NLCommand[Natural Language Command] --> Parser[Command Parser]
+flowchart LR
+    A[Visual Input] --> B[VLM Processing]
+    C[Text Prompt] --> B
+    B --> D{Command Type}
+    D -->|Movement| E[Forward/Backward/Left/Right]
+    D -->|Rotation| F[Turn Left/Right]
+    D -->|Camera| G[Look Up/Down/Left/Right]
+    D -->|Stop| H[Halt]
     
-    Parser --> Forward[Move Forward]
-    Parser --> Backward[Move Backward]
-    Parser --> TurnLeft[Turn Left]
-    Parser --> TurnRight[Turn Right]
-    Parser --> LookUp[Look Up]
-    Parser --> LookDown[Look Down]
-    Parser --> LookLeft[Look Left]
-    Parser --> LookRight[Look Right]
-    Parser --> StrafeLeft[Strafe Left]
-    Parser --> StrafeRight[Strafe Right]
-    Parser --> Stop[Stop]
+    E --> I[Command Array Generation]
+    F --> I
+    G --> I
+    H --> I
     
-    Forward --> CommandVector["[0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]"]
-    Backward --> CommandVector2["[-0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]"]
-    TurnLeft --> CommandVector3["[0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0]"]
-    TurnRight --> CommandVector4["[0.0, 0.0, -0.5, 0.0, 0.0, 0.0, 0.0]"]
-    StrafeLeft --> CommandVector5["[0.0, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0]"]
-    StrafeRight --> CommandVector6["[0.0, -0.1, 0.0, 0.0, 0.0, 0.0, 0.0]"]
-    LookUp --> CommandVector7["[0.0, 0.0, 0.0, 0.5, -0.5, 0.0, 0.0]"]
-    LookDown --> CommandVector8["[0.0, 0.0, 0.0, -0.3, 0.5, 0.0, 0.0]"]
-    LookLeft --> CommandVector9["[0.0, 0.0, 0.0, 0.0, 0.0, 0.8, 0.0]"]
-    LookRight --> CommandVector10["[0.0, 0.0, 0.0, 0.0, 0.0, -0.8, 0.0]"]
-    Stop --> CommandVector11["[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]"]
-    
-    CommandVector --> RobotControl[Robot Control System]
-    CommandVector2 --> RobotControl
-    CommandVector3 --> RobotControl
-    CommandVector4 --> RobotControl
-    CommandVector5 --> RobotControl
-    CommandVector6 --> RobotControl
-    CommandVector7 --> RobotControl
-    CommandVector8 --> RobotControl
-    CommandVector9 --> RobotControl
-    CommandVector10 --> RobotControl
-    CommandVector11 --> RobotControl
+    I --> J[Send to Duck Robot API]
 ```
-
-## Files Overview
-
-- `main.py`: Flask API server that interfaces with MuJoCo and exposes control endpoints
-- `client.py`: Python client library for interacting with the API
-- `vlm_integration.py`: Example implementation showing how a VLM can control the duck robot
 
 ## Installation
 
 ### Prerequisites
 
-- Python 3.8+
-- MuJoCo
-- Open Duck Playground repository
-- For local VLM: [Ollama](https://github.com/ollama/ollama) with llava or similar multimodal model
+- Python 3.8 or higher
+- MuJoCo environment
+- ONNX model for Duck Robot control
 
 ### Setup
 
-1. Install dependencies:
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/open_duck_vlm.git
+   cd open_duck_vlm
+   ```
 
-```bash
-pip install -e .
-# or individually
-pip install flask flask-cors pillow requests opencv-python numpy mujoco etils
-```
+2. Install dependencies using UV:
+   ```bash
+   uv venv
+   uv pip install -e .
+   ```
 
-2. Ensure you have trained an ONNX model for the Open Duck robot (or use a pre-trained one)
-
-3. If using Ollama locally, install it:
-
-```bash
-# Linux
-curl https://ollama.ai/install.sh | sh
-
-# macOS
-brew install ollama
-
-# Windows
-# Download installer from https://ollama.ai/download
-```
-
-4. Pull a multimodal model in Ollama:
-
-```bash
-ollama pull llava
-```
+3. Set up a VLM:
+   - Option 1: **Local Ollama VLM** (recommended for robot deployment)
+     ```bash
+     # Install and set up Ollama automatically
+     uv run ollama-manager install
+     
+     # Or manually from https://ollama.com
+     ```
+     
+   - Option 2: External VLM API (cloud-based solution)
+     - Obtain API access to a vision-language model service
 
 ## Usage
 
-### Starting the API Server
+### Running with Ollama (Local VLM)
 
 ```bash
-# Using Python directly
-python main.py --host 0.0.0.0 --port 5000
-
-# Using UV
-uv run main
-```
-
-Additional options:
-- `--debug`: Enable debug mode
-
-### Running with Local Ollama VLM (Recommended for Robot Deployment)
-
-```bash
-# Using Python directly
-python vlm_integration.py --vlm-type=ollama --ollama-model=llava --onnx-model=path/to/model.onnx
-
-# Using UV
+# Start with default settings
 uv run ollama-run
+
+# With specific model
+uv run ollama-run --ollama-model=llava-next
+
+# Check available Ollama models
+uv run ollama-manager list
+
+# Pull a specific model
+uv run ollama-manager pull llava
 ```
 
 ### Running with External VLM API
 
 ```bash
-# Using Python directly
-python vlm_integration.py --vlm-type=external --vlm-api=https://your-api-endpoint --onnx-model=path/to/model.onnx
-
-# Using UV
-uv run external-run https://your-api-endpoint
+uv run external-run --vlm-api=https://your-vlm-api.com/vision --vlm-key=your-api-key
 ```
 
 ### Interactive Mode
 
-```bash
-# Using Python directly
-python vlm_integration.py --interactive --onnx-model=path/to/model.onnx
+Run in interactive mode to send direct commands:
 
-# Using UV
+```bash
 uv run interactive
 ```
 
-### Using the Client Library
+## VLM Options
 
-The `client.py` module provides a Python client for interacting with the duck robot:
+### Local Ollama VLM
 
-```python
-from client import DuckRobotClient
+The Ollama Manager utility (`ollama.py`) provides a convenient way to:
 
-# Initialize client
-client = DuckRobotClient(api_url="http://localhost:5000")
+- Automatically install Ollama if not present
+- Manage Ollama service lifecycle
+- Pull and query vision-capable models
+- Handle image-based prompts
 
-# Initialize the MuJoCo simulation
-client.initialize(onnx_model_path="path/to/duck_policy.onnx")
-
-# Send a command
-# Format: [vx, vy, omega, neck_pitch, head_pitch, head_yaw, head_roll]
-client.send_direct_command([0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])  # Move forward
-
-# Get a camera frame
-frame_data = client.get_frame()
-with open("frame.png", "wb") as f:
-    f.write(base64.b64decode(frame_data["image"]))
-
-# Send a natural language command
-client.send_nl_command("move forward and turn left")
-
-# Shutdown when done
-client.shutdown()
-```
-
-### Command-line Client
-
-You can also use the client from the command line:
-
-```bash
-# Get status
-python client.py status
-
-# Initialize simulation
-python client.py initialize --onnx-model-path path/to/duck_policy.onnx
-
-# Send direct command (move forward)
-python client.py direct --vx 0.1
-
-# Send natural language command
-python client.py nl "move forward and look left"
-
-# Get a frame and save it
-python client.py frame --output frame.png
-
-# Shutdown
-python client.py shutdown
-```
-
-## API Endpoints
-
-The main API server provides these endpoints:
-
-- `GET /status`: Get the status of the MuJoCo simulation
-- `POST /initialize`: Initialize the MuJoCo simulation
-- `POST /shutdown`: Shutdown the MuJoCo simulation
-- `POST /command`: Send a command to the Duck Robot
-- `GET /frame`: Get the current camera frame
-- `GET /help`: Get API documentation
-
-## Command Format
-
-Direct commands to the duck robot use a 7-element array:
-
-```
-[vx, vy, omega, neck_pitch, head_pitch, head_yaw, head_roll]
-```
-
-Where:
-- `vx`: Forward velocity (-0.15 to 0.2)
-- `vy`: Lateral velocity (-0.2 to 0.2)
-- `omega`: Angular velocity/turning (-1.0 to 1.0)
-- `neck_pitch`: Neck pitch angle (-0.34 to 1.1)
-- `head_pitch`: Head pitch angle (-0.78 to 0.78)
-- `head_yaw`: Head yaw angle (-1.5 to 1.5)
-- `head_roll`: Head roll angle (-0.5 to 0.5)
-
-## VLM Integration Options
-
-### Local Ollama (Recommended for Deployment)
-
-For deployment on the robot itself, we recommend using Ollama for local inference:
-
-```mermaid
-graph TD
-    subgraph "Robot"
-        API[API Server]
-        MuJoCo[MuJoCo Simulation]
-        Ollama[Ollama VLM]
-        Camera[Camera Feed]
-        
-        Camera --> API
-        API --> MuJoCo
-        API --> Ollama
-        Ollama --> API
-    end
-    
-    RemoteClient[Remote Client] --> API
-```
-
-Benefits:
-- No internet connection required
-- Lower latency
-- Privacy (no data leaves the robot)
-- Can run offline
-
-Configuration options:
-- `--ollama-url`: URL where Ollama is running (default: http://localhost:11434)
-- `--ollama-model`: Model to use (default: llava)
+Supported vision models:
+- `llava` - Basic vision-language capabilities
+- `bakllava` - Enhanced vision capabilities
+- `llava-next` - Latest version with improved performance
 
 ### External VLM API
 
-For development or to use more powerful models:
+For higher-quality results or when local resources are constrained, you can connect to:
+- OpenAI GPT-4 Vision
+- Anthropic Claude 3 Vision
+- Other compatible VLM APIs
 
-```mermaid
-graph TD
-    subgraph "Robot"
-        API[API Server]
-        MuJoCo[MuJoCo Simulation]
-        Camera[Camera Feed]
-    end
-    
-    subgraph "Cloud"
-        VLM[External VLM]
-    end
-    
-    Camera --> API
-    API --> MuJoCo
-    API --> VLM
-    VLM --> API
+## API Endpoints
+
+The Duck Robot API provides the following endpoints:
+
+- `GET /status`: Check the status of the simulation
+- `POST /initialize`: Initialize the simulation with an ONNX model
+- `POST /command`: Send a command to the duck robot
+- `POST /nl_command`: Send a natural language command
+- `GET /frame`: Get the current frame from the simulation
+- `POST /shutdown`: Shutdown the simulation
+
+## Project Structure
+
+```
+open_duck_vlm/
+├── playground/                # Duck robot simulation code
+│   └── open_duck_mini_v2/     # Duck robot model
+│       ├── mujoco_infer.py    # MuJoCo inference
+│       └── common/            # Common utilities
+├── main.py                    # API server
+├── client.py                  # Client for the API server
+├── vlm_integration.py         # VLM integration
+├── ollama.py                  # Ollama manager utility
+└── README.md                  # This file
 ```
 
-Configuration options:
-- `--vlm-api`: URL of the external VLM API
-- `--vlm-key`: API key for authentication (if required)
+## Development
 
-## Debugging
+For development, install the additional development dependencies:
 
-- All components include detailed logging
-- The VLM integration saves frames to disk for debugging
-- Use the `--debug` flag for more verbose output
-
-## Example VLM Workflow
-
-```mermaid
-flowchart TD
-    Start([Start]) --> InitServer[Start API Server]
-    InitServer --> InitClient[Initialize Client]
-    InitClient --> InitSim[Initialize Simulation with ONNX model]
-    
-    InitSim --> VLMChoice{Choose VLM Type}
-    VLMChoice -->|Local| InitOllama[Initialize Ollama]
-    VLMChoice -->|External| ConfigAPI[Configure External API]
-    
-    InitOllama --> Loop
-    ConfigAPI --> Loop
-    
-    Loop{Control Loop} --> GetFrame[Get Camera Frame]
-    GetFrame --> ProcessFrame[Send Frame to VLM]
-    ProcessFrame --> ParseResponse[Parse VLM Response]
-    ParseResponse --> SendCommand[Send Command to Robot]
-    SendCommand --> Loop
-    
-    Loop -- End loop --> Shutdown[Shutdown Simulation]
-    Shutdown --> End([End])
+```bash
+uv pip install -e ".[dev]"
 ```
 
-## Notes
+## Deployment Recommendations
 
-- The MuJoCo simulation runs in a separate thread for improved performance
-- Command queueing ensures smooth motion even with delayed VLM responses
-- Natural language commands are mapped to direct commands using simple keyword matching
-- Fixed initialization issue by setting default ONNX model path to "model.onnx"
-- For deployment on a robot, the Ollama integration provides local inference capabilities
+For deploying on the actual robot:
+
+1. Use the Ollama VLM option for local inference to reduce latency
+2. Pre-download the required models before deployment
+3. Ensure the robot has sufficient GPU resources for VLM inference
+4. Configure automatic startup of the Ollama service
+
+## License
+
+[MIT License](LICENSE)

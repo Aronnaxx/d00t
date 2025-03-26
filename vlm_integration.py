@@ -13,6 +13,13 @@ from PIL import Image
 # Import our client
 from client import DuckRobotClient
 
+# Import Ollama manager
+try:
+    from ollama import OllamaManager, start_ollama_server
+    OLLAMA_MANAGER_AVAILABLE = True
+except ImportError:
+    OLLAMA_MANAGER_AVAILABLE = False
+
 # Set up logging with detailed format for debugging
 logging.basicConfig(
     level=logging.INFO,
@@ -37,7 +44,23 @@ class OllamaClient:
         self.base_url = base_url
         self.model_name = model_name
         self.api_url = f"{base_url}/api/generate"
+        self.ollama_manager = None
         
+        # If ollama.py is available, use it to manage Ollama
+        if OLLAMA_MANAGER_AVAILABLE:
+            try:
+                host, port = self._parse_url(base_url)
+                self.ollama_manager = start_ollama_server(
+                    model_name=model_name,
+                    host=host,
+                    port=port
+                )
+                logger.info(f"Using Ollama manager with model {model_name}")
+                return
+            except Exception as e:
+                logger.warning(f"Failed to start Ollama using manager: {e}, falling back to direct API")
+        
+        # Fall back to direct API
         # Test the connection
         try:
             response = requests.get(f"{base_url}/api/tags")
@@ -54,6 +77,17 @@ class OllamaClient:
         except Exception as e:
             logger.warning(f"Failed to connect to Ollama: {e}")
     
+    def _parse_url(self, url: str) -> tuple:
+        """Parse host and port from URL."""
+        if "://" in url:
+            url = url.split("://")[1]
+        
+        if ":" in url:
+            host, port = url.split(":")
+            return host, int(port)
+        
+        return url, 11434
+    
     def query_with_image(self, image: Image.Image, prompt: str) -> Dict[str, Any]:
         """Query the Ollama model with an image and text prompt.
         
@@ -64,6 +98,29 @@ class OllamaClient:
         Returns:
             Response from the model
         """
+        # If using Ollama manager, use it to query the model
+        if self.ollama_manager:
+            try:
+                # Convert image to base64
+                buffered = BytesIO()
+                image.save(buffered, format="JPEG")
+                img_str = base64.b64encode(buffered.getvalue()).decode()
+                
+                response = self.ollama_manager.query_model(
+                    model_name=self.model_name,
+                    prompt=prompt,
+                    images=[img_str]
+                )
+                
+                return {
+                    "text": response.get("response", ""),
+                    "model": self.model_name
+                }
+            except Exception as e:
+                logger.error(f"Error querying Ollama via manager: {e}")
+                return {"error": str(e)}
+        
+        # Fall back to direct API
         try:
             # Convert image to base64
             buffered = BytesIO()
@@ -92,6 +149,12 @@ class OllamaClient:
         except Exception as e:
             logger.error(f"Error querying Ollama: {e}")
             return {"error": str(e)}
+    
+    def __del__(self):
+        """Clean up Ollama manager."""
+        if self.ollama_manager and hasattr(self.ollama_manager, 'stop'):
+            logger.info("Stopping Ollama manager")
+            self.ollama_manager.stop()
 
 class VLMDuckController:
     """Class to integrate a VLM with the Duck Robot."""
@@ -103,7 +166,8 @@ class VLMDuckController:
         vlm_api_url: Optional[str] = None,
         vlm_api_key: Optional[str] = None,
         ollama_url: str = "http://localhost:11434",
-        ollama_model: str = "llava"
+        ollama_model: str = "llava",
+        auto_launch_ollama: bool = True
     ):
         """Initialize the VLM Duck Controller.
         
@@ -114,11 +178,13 @@ class VLMDuckController:
             vlm_api_key: API key for the external VLM API
             ollama_url: URL for the Ollama API
             ollama_model: Model name for Ollama
+            auto_launch_ollama: Whether to automatically launch Ollama if using it
         """
         self.duck_client = DuckRobotClient(api_url=duck_api_url)
         self.vlm_type = vlm_type
         self.vlm_api_url = vlm_api_url
         self.vlm_api_key = vlm_api_key
+        self.auto_launch_ollama = auto_launch_ollama
         
         # Initialize Ollama client if using Ollama
         self.ollama_client = None
@@ -413,6 +479,7 @@ def main() -> None:
     # Ollama options
     parser.add_argument("--ollama-url", type=str, default="http://localhost:11434", help="URL for the Ollama API")
     parser.add_argument("--ollama-model", type=str, default="llava", help="Model name for Ollama (e.g., llava, bakllava)")
+    parser.add_argument("--no-auto-launch", action="store_true", help="Don't automatically launch Ollama")
     
     # Simulation options
     parser.add_argument("--onnx-model", type=str, default="model.onnx", help="Path to the ONNX model file")
@@ -435,7 +502,8 @@ def main() -> None:
             duck_api_url=args.duck_api,
             vlm_type="ollama",
             ollama_url=args.ollama_url,
-            ollama_model=args.ollama_model
+            ollama_model=args.ollama_model,
+            auto_launch_ollama=not args.no_auto_launch
         )
     else:
         # External VLM API
