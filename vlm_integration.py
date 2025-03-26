@@ -24,25 +24,109 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+class OllamaClient:
+    """Client for interacting with Ollama API for vision models."""
+    
+    def __init__(self, base_url: str = "http://localhost:11434", model_name: str = "llava"):
+        """Initialize the Ollama client.
+        
+        Args:
+            base_url: URL for the Ollama API
+            model_name: Name of the model to use (e.g., llava, bakllava)
+        """
+        self.base_url = base_url
+        self.model_name = model_name
+        self.api_url = f"{base_url}/api/generate"
+        
+        # Test the connection
+        try:
+            response = requests.get(f"{base_url}/api/tags")
+            if response.status_code == 200:
+                models = response.json().get("models", [])
+                model_names = [m["name"] for m in models]
+                
+                if model_name not in model_names:
+                    logger.warning(f"Model '{model_name}' not found in available models: {model_names}")
+                else:
+                    logger.info(f"Successfully connected to Ollama with model: {model_name}")
+            else:
+                logger.warning(f"Failed to get Ollama models. Status code: {response.status_code}")
+        except Exception as e:
+            logger.warning(f"Failed to connect to Ollama: {e}")
+    
+    def query_with_image(self, image: Image.Image, prompt: str) -> Dict[str, Any]:
+        """Query the Ollama model with an image and text prompt.
+        
+        Args:
+            image: PIL Image to process
+            prompt: Text prompt to send with the image
+            
+        Returns:
+            Response from the model
+        """
+        try:
+            # Convert image to base64
+            buffered = BytesIO()
+            image.save(buffered, format="JPEG")
+            img_str = base64.b64encode(buffered.getvalue()).decode()
+            
+            # Create the prompt with image
+            payload = {
+                "model": self.model_name,
+                "prompt": prompt,
+                "images": [img_str],
+                "stream": False
+            }
+            
+            # Make the request
+            response = requests.post(self.api_url, json=payload)
+            response.raise_for_status()
+            result = response.json()
+            
+            # Format response for compatibility with other VLMs
+            return {
+                "text": result.get("response", ""),
+                "model": self.model_name
+            }
+            
+        except Exception as e:
+            logger.error(f"Error querying Ollama: {e}")
+            return {"error": str(e)}
+
 class VLMDuckController:
     """Class to integrate a VLM with the Duck Robot."""
     
     def __init__(
         self, 
         duck_api_url: str = "http://localhost:5000",
+        vlm_type: str = "external",
         vlm_api_url: Optional[str] = None,
-        vlm_api_key: Optional[str] = None
+        vlm_api_key: Optional[str] = None,
+        ollama_url: str = "http://localhost:11434",
+        ollama_model: str = "llava"
     ):
         """Initialize the VLM Duck Controller.
         
         Args:
             duck_api_url: URL for the Duck Robot API
-            vlm_api_url: URL for the VLM API (if using an external VLM)
-            vlm_api_key: API key for the VLM API (if required)
+            vlm_type: Type of VLM to use ('external', 'ollama')
+            vlm_api_url: URL for the external VLM API
+            vlm_api_key: API key for the external VLM API
+            ollama_url: URL for the Ollama API
+            ollama_model: Model name for Ollama
         """
         self.duck_client = DuckRobotClient(api_url=duck_api_url)
+        self.vlm_type = vlm_type
         self.vlm_api_url = vlm_api_url
         self.vlm_api_key = vlm_api_key
+        
+        # Initialize Ollama client if using Ollama
+        self.ollama_client = None
+        if vlm_type == "ollama":
+            self.ollama_client = OllamaClient(
+                base_url=ollama_url,
+                model_name=ollama_model
+            )
         
         # Initialize state
         self.last_frame = None
@@ -99,6 +183,28 @@ class VLMDuckController:
             return None
     
     def query_vlm(self, image: Image.Image, prompt: str) -> Dict[str, Any]:
+        """Query the configured VLM with the given image and prompt.
+        
+        Args:
+            image: PIL Image to send to the VLM
+            prompt: Text prompt to send to the VLM
+            
+        Returns:
+            Response from the VLM
+        """
+        # Use Ollama if configured
+        if self.vlm_type == "ollama" and self.ollama_client:
+            return self.ollama_client.query_with_image(image, prompt)
+        
+        # Use external VLM API
+        elif self.vlm_type == "external" and self.vlm_api_url:
+            return self.query_external_vlm(image, prompt)
+        
+        else:
+            logger.error(f"No valid VLM configuration for type: {self.vlm_type}")
+            return {"error": "No valid VLM configuration"}
+    
+    def query_external_vlm(self, image: Image.Image, prompt: str) -> Dict[str, Any]:
         """Query an external VLM API with the given image and prompt.
         
         Args:
@@ -142,44 +248,56 @@ class VLMDuckController:
             return response.json()
         
         except Exception as e:
-            logger.error(f"Error querying VLM: {e}")
+            logger.error(f"Error querying external VLM: {e}")
             return {"error": str(e)}
     
     def process_vlm_response_to_command(self, vlm_response: Dict[str, Any]) -> Optional[List[float]]:
         """Process a VLM response into a Duck Robot command.
         
-        This is a simple example that could be expanded based on the VLM's output format.
-        
         Args:
-            vlm_response: Response from the VLM API
+            vlm_response: Response from the VLM
             
         Returns:
             Command array if successful, None otherwise
         """
         try:
             # This implementation will depend on the specific VLM API you're using
-            # Here's a simple example that assumes the VLM returns a "command" key with an array
+            # First check for error
+            if "error" in vlm_response:
+                logger.error(f"Error in VLM response: {vlm_response['error']}")
+                return None
+                
+            # Check if it directly returns a command array
             if "command" in vlm_response:
                 return vlm_response["command"]
             
             # Or maybe it returns a text description that we need to parse
             if "text" in vlm_response:
                 text = vlm_response["text"].lower()
+                logger.debug(f"Processing VLM text response: {text}")
                 
                 # Simple keyword-based parsing
-                if "move forward" in text:
+                if "move forward" in text or "go forward" in text:
                     return [0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-                elif "move backward" in text:
+                elif "move backward" in text or "go backward" in text or "go back" in text:
                     return [-0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
                 elif "turn left" in text:
                     return [0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0]
                 elif "turn right" in text:
                     return [0.0, 0.0, -0.5, 0.0, 0.0, 0.0, 0.0]
+                elif "move left" in text or "go left" in text or "strafe left" in text:
+                    return [0.0, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0]
+                elif "move right" in text or "go right" in text or "strafe right" in text:
+                    return [0.0, -0.1, 0.0, 0.0, 0.0, 0.0, 0.0]
                 elif "look up" in text:
                     return [0.0, 0.0, 0.0, 0.5, -0.5, 0.0, 0.0]
                 elif "look down" in text:
                     return [0.0, 0.0, 0.0, -0.3, 0.5, 0.0, 0.0]
-                elif "stop" in text:
+                elif "look left" in text:
+                    return [0.0, 0.0, 0.0, 0.0, 0.0, 0.8, 0.0]
+                elif "look right" in text:
+                    return [0.0, 0.0, 0.0, 0.0, 0.0, -0.8, 0.0]
+                elif "stop" in text or "halt" in text or "stay" in text:
                     return [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
             
             logger.warning(f"Could not extract command from VLM response: {vlm_response}")
@@ -218,22 +336,24 @@ class VLMDuckController:
                 frame.save(frame_path)
                 logger.debug(f"Saved frame to {frame_path}")
                 
-                # Query VLM if API URL is provided
-                if self.vlm_api_url:
-                    # Generate prompt with history context
-                    context = "\n".join([f"Previous action: {cmd}" for cmd in self.command_history[-3:]])
-                    full_prompt = f"{prompt_template}\n\nContext:\n{context}" if self.command_history else prompt_template
-                    
-                    vlm_response = self.query_vlm(frame, full_prompt)
-                    logger.info(f"VLM response: {json.dumps(vlm_response, indent=2)}")
-                    
-                    # Process response to command
-                    command = self.process_vlm_response_to_command(vlm_response)
-                    if command:
-                        # Send command to duck robot
-                        result = self.duck_client.send_direct_command(command)
-                        logger.info(f"Sent command {command}, result: {result}")
-                        self.command_history.append(command)
+                # Generate prompt with history context
+                context = "\n".join([f"Previous action: {cmd}" for cmd in self.command_history[-3:]])
+                full_prompt = f"{prompt_template}\n\nContext:\n{context}" if self.command_history else prompt_template
+                
+                # Query VLM
+                vlm_response = self.query_vlm(frame, full_prompt)
+                logger.info(f"VLM response: {json.dumps(vlm_response, indent=2)}")
+                
+                # Process response to command
+                command = self.process_vlm_response_to_command(vlm_response)
+                if command:
+                    # Send command to duck robot
+                    result = self.duck_client.send_direct_command(command)
+                    logger.info(f"Sent command {command}, result: {result}")
+                    self.command_history.append(command)
+                else:
+                    logger.warning("Failed to extract a valid command, sending stop command")
+                    self.duck_client.send_direct_command([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
                 
                 # Delay before next iteration
                 time.sleep(delay)
@@ -276,14 +396,28 @@ class VLMDuckController:
             logger.error(f"Error in interactive mode: {e}")
 
 
-def vlm_test_script() -> None:
-    """Sample script showing how a VLM/LLM system could control the Duck Robot."""
+def main() -> None:
+    """Main function to run the VLM Duck Controller."""
     # Set up command line arguments
     parser = argparse.ArgumentParser(description="VLM Duck Robot Controller")
     parser.add_argument("--duck-api", type=str, default="http://localhost:5000", help="URL for the Duck Robot API")
-    parser.add_argument("--vlm-api", type=str, help="URL for the VLM API")
-    parser.add_argument("--vlm-key", type=str, help="API key for the VLM API")
-    parser.add_argument("--onnx-model", type=str, required=True, help="Path to the ONNX model file")
+    
+    # VLM type selection
+    parser.add_argument("--vlm-type", type=str, choices=["external", "ollama"], default="ollama", 
+                        help="Type of VLM to use (external API or local Ollama)")
+    
+    # External VLM API options
+    parser.add_argument("--vlm-api", type=str, help="URL for the external VLM API")
+    parser.add_argument("--vlm-key", type=str, help="API key for the external VLM API")
+    
+    # Ollama options
+    parser.add_argument("--ollama-url", type=str, default="http://localhost:11434", help="URL for the Ollama API")
+    parser.add_argument("--ollama-model", type=str, default="llava", help="Model name for Ollama (e.g., llava, bakllava)")
+    
+    # Simulation options
+    parser.add_argument("--onnx-model", type=str, default="model.onnx", help="Path to the ONNX model file")
+    
+    # Mode options
     parser.add_argument("--interactive", action="store_true", help="Run in interactive mode")
     parser.add_argument("--iterations", type=int, default=10, help="Number of iterations for VLM loop")
     parser.add_argument("--delay", type=float, default=2.0, help="Delay between iterations in seconds")
@@ -294,14 +428,30 @@ def vlm_test_script() -> None:
     if args.debug:
         logger.setLevel(logging.DEBUG)
     
-    # Initialize controller
-    controller = VLMDuckController(
-        duck_api_url=args.duck_api,
-        vlm_api_url=args.vlm_api,
-        vlm_api_key=args.vlm_key
-    )
+    # Initialize controller based on VLM type
+    if args.vlm_type == "ollama":
+        logger.info(f"Using Ollama model {args.ollama_model} at {args.ollama_url}")
+        controller = VLMDuckController(
+            duck_api_url=args.duck_api,
+            vlm_type="ollama",
+            ollama_url=args.ollama_url,
+            ollama_model=args.ollama_model
+        )
+    else:
+        # External VLM API
+        if not args.vlm_api and not args.interactive:
+            logger.error("External VLM type requires --vlm-api parameter")
+            return
+        
+        controller = VLMDuckController(
+            duck_api_url=args.duck_api,
+            vlm_type="external",
+            vlm_api_url=args.vlm_api,
+            vlm_api_key=args.vlm_key
+        )
     
     # Initialize simulation
+    logger.info(f"Initializing simulation with ONNX model: {args.onnx_model}")
     if not controller.initialize_simulation(args.onnx_model):
         logger.error("Failed to initialize simulation, exiting")
         return
@@ -310,10 +460,10 @@ def vlm_test_script() -> None:
     try:
         if args.interactive:
             controller.run_nl_command_mode()
-        elif args.vlm_api:
+        elif args.vlm_type == "ollama" or args.vlm_api:
             controller.run_loop(max_iterations=args.iterations, delay=args.delay)
         else:
-            logger.error("Either --interactive or --vlm-api must be specified")
+            logger.error("Either --interactive mode or a valid VLM configuration must be specified")
     finally:
         # Shutdown the simulation when done
         controller.duck_client.shutdown()
@@ -321,4 +471,4 @@ def vlm_test_script() -> None:
 
 # Example usage of the VLM integration
 if __name__ == "__main__":
-    vlm_test_script() 
+    main() 

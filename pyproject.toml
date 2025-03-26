@@ -36,6 +36,12 @@ python = "3.8"
 main = "python main.py"
 client = "python client.py"
 vlm-test = "python vlm_integration.py"
+# Run with Ollama
+ollama-run = "python vlm_integration.py --vlm-type=ollama --ollama-model=llava"
+# Run with external VLM
+external-run = "python vlm_integration.py --vlm-type=external --vlm-api={args}"
+# Run in interactive mode
+interactive = "python vlm_integration.py --interactive"
 
 [tool.hatch.metadata]
 allow-direct-references = true

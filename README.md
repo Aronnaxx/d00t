@@ -29,12 +29,17 @@ graph TD
     PythonClient -- used by --> CLITool
     PythonClient -- used by --> VLMIntegration
     
-    subgraph "External VLM"
-        VLMService[VLM API Service]
+    subgraph "VLM Options"
+        OllamaVLM[Local Ollama]
+        ExternalVLM[External VLM API]
     end
     
-    VLMIntegration -- sends frames to --> VLMService
-    VLMService -- returns commands --> VLMIntegration
+    VLMIntegration -- uses --> OllamaVLM
+    VLMIntegration -- uses --> ExternalVLM
+    OllamaVLM -- analyzes --> CF
+    ExternalVLM -- analyzes --> CF
+    OllamaVLM -- issues commands to --> Robot
+    ExternalVLM -- issues commands to --> Robot
 ```
 
 ## Control Flow
@@ -89,13 +94,23 @@ graph LR
     Parser --> TurnRight[Turn Right]
     Parser --> LookUp[Look Up]
     Parser --> LookDown[Look Down]
+    Parser --> LookLeft[Look Left]
+    Parser --> LookRight[Look Right]
+    Parser --> StrafeLeft[Strafe Left]
+    Parser --> StrafeRight[Strafe Right]
+    Parser --> Stop[Stop]
     
     Forward --> CommandVector["[0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]"]
     Backward --> CommandVector2["[-0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]"]
     TurnLeft --> CommandVector3["[0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0]"]
     TurnRight --> CommandVector4["[0.0, 0.0, -0.5, 0.0, 0.0, 0.0, 0.0]"]
-    LookUp --> CommandVector5["[0.0, 0.0, 0.0, 0.5, -0.5, 0.0, 0.0]"]
-    LookDown --> CommandVector6["[0.0, 0.0, 0.0, -0.3, 0.5, 0.0, 0.0]"]
+    StrafeLeft --> CommandVector5["[0.0, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0]"]
+    StrafeRight --> CommandVector6["[0.0, -0.1, 0.0, 0.0, 0.0, 0.0, 0.0]"]
+    LookUp --> CommandVector7["[0.0, 0.0, 0.0, 0.5, -0.5, 0.0, 0.0]"]
+    LookDown --> CommandVector8["[0.0, 0.0, 0.0, -0.3, 0.5, 0.0, 0.0]"]
+    LookLeft --> CommandVector9["[0.0, 0.0, 0.0, 0.0, 0.0, 0.8, 0.0]"]
+    LookRight --> CommandVector10["[0.0, 0.0, 0.0, 0.0, 0.0, -0.8, 0.0]"]
+    Stop --> CommandVector11["[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]"]
     
     CommandVector --> RobotControl[Robot Control System]
     CommandVector2 --> RobotControl
@@ -103,6 +118,11 @@ graph LR
     CommandVector4 --> RobotControl
     CommandVector5 --> RobotControl
     CommandVector6 --> RobotControl
+    CommandVector7 --> RobotControl
+    CommandVector8 --> RobotControl
+    CommandVector9 --> RobotControl
+    CommandVector10 --> RobotControl
+    CommandVector11 --> RobotControl
 ```
 
 ## Files Overview
@@ -118,6 +138,7 @@ graph LR
 - Python 3.8+
 - MuJoCo
 - Open Duck Playground repository
+- For local VLM: [Ollama](https://github.com/ollama/ollama) with llava or similar multimodal model
 
 ### Setup
 
@@ -131,16 +152,69 @@ pip install flask flask-cors pillow requests opencv-python numpy mujoco etils
 
 2. Ensure you have trained an ONNX model for the Open Duck robot (or use a pre-trained one)
 
+3. If using Ollama locally, install it:
+
+```bash
+# Linux
+curl https://ollama.ai/install.sh | sh
+
+# macOS
+brew install ollama
+
+# Windows
+# Download installer from https://ollama.ai/download
+```
+
+4. Pull a multimodal model in Ollama:
+
+```bash
+ollama pull llava
+```
+
 ## Usage
 
 ### Starting the API Server
 
 ```bash
+# Using Python directly
 python main.py --host 0.0.0.0 --port 5000
+
+# Using UV
+uv run main
 ```
 
 Additional options:
 - `--debug`: Enable debug mode
+
+### Running with Local Ollama VLM (Recommended for Robot Deployment)
+
+```bash
+# Using Python directly
+python vlm_integration.py --vlm-type=ollama --ollama-model=llava --onnx-model=path/to/model.onnx
+
+# Using UV
+uv run ollama-run
+```
+
+### Running with External VLM API
+
+```bash
+# Using Python directly
+python vlm_integration.py --vlm-type=external --vlm-api=https://your-api-endpoint --onnx-model=path/to/model.onnx
+
+# Using UV
+uv run external-run https://your-api-endpoint
+```
+
+### Interactive Mode
+
+```bash
+# Using Python directly
+python vlm_integration.py --interactive --onnx-model=path/to/model.onnx
+
+# Using UV
+uv run interactive
+```
 
 ### Using the Client Library
 
@@ -195,18 +269,6 @@ python client.py frame --output frame.png
 python client.py shutdown
 ```
 
-### VLM Integration
-
-The `vlm_integration.py` file demonstrates how to integrate a VLM with the Duck Robot:
-
-```bash
-# Run in interactive mode (natural language commands)
-python vlm_integration.py --onnx-model path/to/duck_policy.onnx --interactive
-
-# Use an external VLM API
-python vlm_integration.py --onnx-model path/to/duck_policy.onnx --vlm-api https://your-vlm-api.com --vlm-key your_api_key
-```
-
 ## API Endpoints
 
 The main API server provides these endpoints:
@@ -235,17 +297,64 @@ Where:
 - `head_yaw`: Head yaw angle (-1.5 to 1.5)
 - `head_roll`: Head roll angle (-0.5 to 0.5)
 
-## VLM Integration
+## VLM Integration Options
 
-To integrate your own VLM:
+### Local Ollama (Recommended for Deployment)
 
-1. Implement an API endpoint that accepts:
-   - An image (base64 encoded)
-   - A text prompt
+For deployment on the robot itself, we recommend using Ollama for local inference:
 
-2. Update the `process_vlm_response_to_command` method in `VLMDuckController` to parse your VLM's response format
+```mermaid
+graph TD
+    subgraph "Robot"
+        API[API Server]
+        MuJoCo[MuJoCo Simulation]
+        Ollama[Ollama VLM]
+        Camera[Camera Feed]
+        
+        Camera --> API
+        API --> MuJoCo
+        API --> Ollama
+        Ollama --> API
+    end
+    
+    RemoteClient[Remote Client] --> API
+```
 
-3. Use the `vlm_integration.py` script with your VLM API endpoint
+Benefits:
+- No internet connection required
+- Lower latency
+- Privacy (no data leaves the robot)
+- Can run offline
+
+Configuration options:
+- `--ollama-url`: URL where Ollama is running (default: http://localhost:11434)
+- `--ollama-model`: Model to use (default: llava)
+
+### External VLM API
+
+For development or to use more powerful models:
+
+```mermaid
+graph TD
+    subgraph "Robot"
+        API[API Server]
+        MuJoCo[MuJoCo Simulation]
+        Camera[Camera Feed]
+    end
+    
+    subgraph "Cloud"
+        VLM[External VLM]
+    end
+    
+    Camera --> API
+    API --> MuJoCo
+    API --> VLM
+    VLM --> API
+```
+
+Configuration options:
+- `--vlm-api`: URL of the external VLM API
+- `--vlm-key`: API key for authentication (if required)
 
 ## Debugging
 
@@ -261,9 +370,14 @@ flowchart TD
     InitServer --> InitClient[Initialize Client]
     InitClient --> InitSim[Initialize Simulation with ONNX model]
     
-    InitSim --> Loop{Control Loop}
+    InitSim --> VLMChoice{Choose VLM Type}
+    VLMChoice -->|Local| InitOllama[Initialize Ollama]
+    VLMChoice -->|External| ConfigAPI[Configure External API]
     
-    Loop --> GetFrame[Get Camera Frame]
+    InitOllama --> Loop
+    ConfigAPI --> Loop
+    
+    Loop{Control Loop} --> GetFrame[Get Camera Frame]
     GetFrame --> ProcessFrame[Send Frame to VLM]
     ProcessFrame --> ParseResponse[Parse VLM Response]
     ParseResponse --> SendCommand[Send Command to Robot]
@@ -279,3 +393,4 @@ flowchart TD
 - Command queueing ensures smooth motion even with delayed VLM responses
 - Natural language commands are mapped to direct commands using simple keyword matching
 - Fixed initialization issue by setting default ONNX model path to "model.onnx"
+- For deployment on a robot, the Ollama integration provides local inference capabilities
