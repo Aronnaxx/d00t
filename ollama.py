@@ -4,7 +4,6 @@ Ollama Manager Utility
 
 This script provides utilities to manage Ollama instances for local VLM inference:
 - Check if Ollama is installed
-- Install Ollama if necessary
 - Start the Ollama service
 - Pull models from the Ollama library
 - Query models with text and images
@@ -37,53 +36,45 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Global constants
-OLLAMA_DOWNLOAD_URLS = {
-    "linux": "https://ollama.com/download/ollama-linux-amd64",
-    "darwin": "https://ollama.com/download/ollama-darwin-amd64",
-    "windows": "https://ollama.com/download/ollama-windows-amd64.zip"
-}
-
-DEFAULT_INSTALL_PATHS = {
-    "linux": "/usr/local/bin/ollama",
-    "darwin": "/usr/local/bin/ollama",
-    "windows": os.path.expanduser("~/ollama/ollama.exe")
-}
-
 DEFAULT_PORT = 11434
 VISION_COMPATIBLE_MODELS = ["llava", "bakllava", "llava-next"]
+
+# Default system prompts
+DEFAULT_SYSTEM_PROMPT = """You are a vision-enabled AI controlling a Duck Robot. 
+You can see through the robot's camera and respond to natural language commands.
+You can control the robot's movement (forward, backward, left, right), 
+rotation (turn left, right), and camera orientation (look up, down, left, right).
+When given a command, respond with a brief explanation of what you're seeing
+and what action you'll take."""
 
 class OllamaManager:
     """Utility class to manage Ollama instances for local VLM inference."""
     
     def __init__(
         self,
-        install_path: Optional[str] = None,
         host: str = "localhost",
         port: int = DEFAULT_PORT,
-        timeout: int = 120,
-        auto_launch: bool = True
+        timeout: int = 60,
+        auto_start: bool = True,
+        system_prompt: Optional[str] = None
     ):
         """Initialize the Ollama manager.
         
         Args:
-            install_path: Path to the Ollama executable
             host: Host to connect to
             port: Port to connect to
             timeout: Timeout for Ollama startup in seconds
-            auto_launch: Whether to automatically launch Ollama if not running
+            auto_start: Whether to automatically start Ollama if it's installed but not running
+            system_prompt: Default system prompt to use with models
         """
         self.system = platform.system().lower()
-        
-        if self.system not in OLLAMA_DOWNLOAD_URLS:
-            raise ValueError(f"Unsupported system: {self.system}")
-        
-        self.install_path = install_path or DEFAULT_INSTALL_PATHS.get(self.system)
         self.host = host
         self.port = port
         self.timeout = timeout
-        self.auto_launch = auto_launch
+        self.auto_start = auto_start
         self.base_url = f"http://{host}:{port}"
         self.api_url = f"{self.base_url}/api"
+        self.system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
         
         # Track if we started the process
         self.process = None
@@ -91,13 +82,10 @@ class OllamaManager:
         
         logger.info(f"Initialized Ollama manager for {self.system} with URL {self.base_url}")
         
-        # Auto-check and launch if requested
-        if auto_launch:
-            if not self.is_running():
-                if not self.is_installed():
-                    logger.info("Ollama not installed. Attempting to install...")
-                    self.install()
-                logger.info("Starting Ollama service...")
+        # Auto-check and start if requested
+        if auto_start:
+            if not self.is_running() and self.is_installed():
+                logger.info("Ollama installed but not running. Starting...")
                 self.start()
     
     def is_installed(self) -> bool:
@@ -106,106 +94,38 @@ class OllamaManager:
         Returns:
             True if Ollama is installed
         """
-        if os.path.exists(self.install_path):
-            logger.info(f"Ollama executable found at {self.install_path}")
-            return True
-        
         # Try checking if it's in PATH
         try:
+            which_cmd = "where" if self.system == "windows" else "which"
             result = subprocess.run(
-                ["which", "ollama"] if self.system != "windows" else ["where", "ollama"],
+                [which_cmd, "ollama"],
                 capture_output=True,
                 text=True
             )
             if result.returncode == 0:
-                self.install_path = result.stdout.strip()
-                logger.info(f"Ollama found in PATH at {self.install_path}")
-                return True
-        except Exception as e:
-            logger.debug(f"Error checking for Ollama in PATH: {e}")
-        
-        logger.info("Ollama not installed")
-        return False
-    
-    def install(self) -> bool:
-        """Install Ollama.
-        
-        Returns:
-            True if installation was successful
-        """
-        try:
-            if self.system == "linux":
-                logger.info("Installing Ollama on Linux...")
-                # Create install directory if it doesn't exist
-                install_dir = os.path.dirname(self.install_path)
-                os.makedirs(install_dir, exist_ok=True)
-                
-                # Download and install
-                download_url = OLLAMA_DOWNLOAD_URLS["linux"]
-                subprocess.run(
-                    ["curl", "-L", download_url, "-o", self.install_path],
-                    check=True
-                )
-                subprocess.run(["chmod", "+x", self.install_path], check=True)
-                logger.info(f"Ollama installed to {self.install_path}")
-                return True
-                
-            elif self.system == "darwin":
-                logger.info("Installing Ollama on macOS...")
-                # Try with brew first
-                try:
-                    result = subprocess.run(
-                        ["brew", "install", "ollama"],
-                        capture_output=True,
-                        text=True,
-                        check=True
-                    )
-                    logger.info("Ollama installed with Homebrew")
-                    return True
-                except Exception as e:
-                    logger.warning(f"Failed to install with Homebrew: {e}, falling back to manual install")
-                
-                # Manual install
-                install_dir = os.path.dirname(self.install_path)
-                os.makedirs(install_dir, exist_ok=True)
-                
-                download_url = OLLAMA_DOWNLOAD_URLS["darwin"]
-                subprocess.run(
-                    ["curl", "-L", download_url, "-o", self.install_path],
-                    check=True
-                )
-                subprocess.run(["chmod", "+x", self.install_path], check=True)
-                logger.info(f"Ollama installed to {self.install_path}")
-                return True
-                
-            elif self.system == "windows":
-                logger.info("Installing Ollama on Windows...")
-                # Create install directory
-                install_dir = os.path.dirname(self.install_path)
-                os.makedirs(install_dir, exist_ok=True)
-                
-                # Download zip
-                download_url = OLLAMA_DOWNLOAD_URLS["windows"]
-                zip_path = os.path.join(install_dir, "ollama.zip")
-                subprocess.run(
-                    ["curl", "-L", download_url, "-o", zip_path],
-                    check=True
-                )
-                
-                # Extract zip
-                import zipfile
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(install_dir)
-                
-                logger.info(f"Ollama installed to {install_dir}")
+                install_path = result.stdout.strip()
+                logger.info(f"Ollama found in PATH at {install_path}")
                 return True
             
-            else:
-                logger.error(f"Unsupported system for installation: {self.system}")
-                return False
-                
+            # Check common install locations
+            common_paths = {
+                "linux": ["/usr/local/bin/ollama", "/usr/bin/ollama"],
+                "darwin": ["/usr/local/bin/ollama", "/opt/homebrew/bin/ollama"],
+                "windows": [
+                    os.path.expanduser("~/ollama/ollama.exe"),
+                    "C:\\Program Files\\Ollama\\ollama.exe"
+                ]
+            }
+            
+            for path in common_paths.get(self.system, []):
+                if os.path.exists(path):
+                    logger.info(f"Ollama executable found at {path}")
+                    return True
+            
+            logger.info("Ollama not installed")
+            return False
         except Exception as e:
-            logger.error(f"Error installing Ollama: {e}")
+            logger.debug(f"Error checking for Ollama: {e}")
             return False
     
     def is_running(self) -> bool:
@@ -237,19 +157,19 @@ class OllamaManager:
             return True
         
         if not self.is_installed():
-            logger.error("Ollama is not installed, can't start service")
+            logger.error("Ollama is not installed. Please install Ollama first.")
             return False
         
         try:
             # Start Ollama as a background process
-            logger.info(f"Starting Ollama service with {self.install_path}...")
+            logger.info("Starting Ollama service...")
             
             if self.system == "windows":
                 # Windows needs special handling for background processes
                 # Use creationflags to create a new process group
                 from subprocess import CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS
                 self.process = subprocess.Popen(
-                    [self.install_path, "serve"],
+                    ["ollama", "serve"],
                     creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE
@@ -257,7 +177,7 @@ class OllamaManager:
             else:
                 # Unix systems
                 self.process = subprocess.Popen(
-                    [self.install_path, "serve"],
+                    ["ollama", "serve"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE
                 )
@@ -324,12 +244,31 @@ class OllamaManager:
             models = result.get("models", [])
             
             # Log models in user-friendly format
-            logger.info(f"Available models: {', '.join([m['name'] for m in models])}")
+            if models:
+                logger.info(f"Available models: {', '.join([m['name'] for m in models])}")
+            else:
+                logger.info("No models found")
             
             return models
         except Exception as e:
             logger.error(f"Error listing models: {e}")
             return []
+    
+    def model_exists(self, model_name: str) -> bool:
+        """Check if a model exists.
+        
+        Args:
+            model_name: Name of the model
+            
+        Returns:
+            True if the model exists
+        """
+        try:
+            models = self.list_models()
+            return any(model["name"] == model_name for model in models)
+        except Exception as e:
+            logger.error(f"Error checking if model exists: {e}")
+            return False
     
     def get_model_info(self, model_name: str) -> Optional[Dict[str, Any]]:
         """Get info for a specific model.
@@ -365,13 +304,13 @@ class OllamaManager:
             logger.info(f"Pulling model {model_name}...")
             
             # Check if model is already available
-            if self.get_model_info(model_name):
+            if self.model_exists(model_name):
                 logger.info(f"Model {model_name} is already available")
                 return True
             
             # Pull the model using Ollama CLI
             result = subprocess.run(
-                [self.install_path, "pull", model_name],
+                ["ollama", "pull", model_name],
                 capture_output=True,
                 text=True
             )
@@ -405,7 +344,7 @@ class OllamaManager:
         """
         try:
             # Check if model is available, pull if not
-            if not self.get_model_info(model_name):
+            if not self.model_exists(model_name):
                 logger.info(f"Model {model_name} not found, pulling...")
                 if not self.pull_model(model_name):
                     return {"error": f"Failed to pull model {model_name}"}
@@ -417,8 +356,9 @@ class OllamaManager:
                 "stream": False
             }
             
-            if system_prompt:
-                payload["system"] = system_prompt
+            # Use provided system prompt or default
+            if system_prompt or self.system_prompt:
+                payload["system"] = system_prompt or self.system_prompt
                 
             if images:
                 # Check if model supports vision
@@ -454,21 +394,27 @@ class OllamaManager:
             logger.error(f"Error during cleanup: {e}")
 
 
-def start_ollama_server(model_name: str = "llava", host: str = "localhost", port: int = DEFAULT_PORT) -> OllamaManager:
+def start_ollama_server(model_name: str = "llava", host: str = "localhost", port: int = DEFAULT_PORT, system_prompt: Optional[str] = None) -> OllamaManager:
     """Convenience function to start an Ollama server with the given model.
     
     Args:
         model_name: Name of the model to use
         host: Host to connect to
         port: Port to connect to
+        system_prompt: Optional system prompt to use with the model
         
     Returns:
         OllamaManager instance
     """
-    manager = OllamaManager(host=host, port=port, auto_launch=True)
+    manager = OllamaManager(
+        host=host, 
+        port=port, 
+        auto_start=True,
+        system_prompt=system_prompt
+    )
     
     # Pull the model if it's not already available
-    if not manager.get_model_info(model_name):
+    if not manager.model_exists(model_name):
         manager.pull_model(model_name)
     
     return manager
@@ -480,9 +426,6 @@ def main():
     
     # Add subparsers for different commands
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
-    
-    # Install command
-    install_parser = subparsers.add_parser("install", help="Install Ollama")
     
     # Start command
     start_parser = subparsers.add_parser("start", help="Start Ollama service")
@@ -508,7 +451,6 @@ def main():
     
     # Global arguments
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("--path", type=str, help="Path to the Ollama executable")
     
     args = parser.parse_args()
     
@@ -517,18 +459,14 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
     
     # Create manager
-    manager = OllamaManager(install_path=args.path, auto_launch=False)
+    manager = OllamaManager(
+        host=args.host if hasattr(args, 'host') else "localhost",
+        port=args.port if hasattr(args, 'port') else DEFAULT_PORT,
+        auto_start=False
+    )
     
     # Process commands
-    if args.command == "install":
-        if manager.install():
-            print("Ollama installed successfully")
-            return 0
-        else:
-            print("Failed to install Ollama")
-            return 1
-    
-    elif args.command == "start":
+    if args.command == "start":
         if manager.start():
             print("Ollama service started")
             return 0
@@ -538,7 +476,6 @@ def main():
     
     elif args.command == "stop":
         # Create a new manager with the current host/port
-        manager = OllamaManager(install_path=args.path, auto_launch=False)
         manager.started_by_us = True  # Trick it into stopping
         if manager.stop():
             print("Ollama service stopped")
@@ -574,6 +511,7 @@ def main():
             try:
                 with open(args.image, "rb") as f:
                     img_data = f.read()
+                import base64
                 images = [base64.b64encode(img_data).decode()]
             except Exception as e:
                 print(f"Error reading image: {e}")

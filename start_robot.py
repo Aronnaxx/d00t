@@ -19,6 +19,19 @@ import sys
 import time
 from pathlib import Path
 
+# Import our configuration module
+try:
+    from config import config, get_system_prompt, is_model_available
+    CONFIG_AVAILABLE = True
+except ImportError:
+    CONFIG_AVAILABLE = False
+    DEFAULT_SYSTEM_PROMPT = """You are a vision-enabled AI controlling a Duck Robot. 
+You can see through the robot's camera and respond to natural language commands.
+You can control the robot's movement (forward, backward, left, right), 
+rotation (turn left, right), and camera orientation (look up, down, left, right).
+When given a command, respond with a brief explanation of what you're seeing
+and what action you'll take."""
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -51,26 +64,30 @@ def ensure_onnx_model(model_path="model.onnx"):
     return str(model_path)
 
 def ensure_ollama():
-    """Ensure Ollama is installed and running."""
+    """Ensure Ollama is running (but not install it)."""
     try:
         # Import the Ollama manager
         from ollama import OllamaManager
         
-        logger.info("Checking Ollama installation")
-        manager = OllamaManager()
+        logger.info("Checking Ollama status")
+        manager = OllamaManager(auto_start=True)
         
         if not manager.is_installed():
-            logger.info("Ollama not installed. Installing now...")
-            manager.install()
+            logger.error("Ollama is not installed. Please install Ollama first - see README.md for instructions.")
+            return False
         
         if not manager.is_running():
             logger.info("Starting Ollama service")
-            manager.start()
-            time.sleep(2)  # Give it time to initialize
+            if not manager.start():
+                logger.error("Failed to start Ollama service")
+                return False
         
         # Check available models
         models = manager.list_models()
-        logger.info(f"Available Ollama models: {', '.join([m['name'] for m in models]) if models else 'None'}")
+        if models:
+            logger.info(f"Available Ollama models: {', '.join([m['name'] for m in models])}")
+        else:
+            logger.warning("No Ollama models found. You may need to pull a model like 'ollama pull llava'")
         
         return True
     except ImportError:
@@ -80,15 +97,43 @@ def ensure_ollama():
         logger.error(f"Error setting up Ollama: {e}")
         return False
 
-def start_robot(args):
-    """Start the Duck Robot with the specified configuration.
+def check_voice_deps():
+    """Check if voice dependencies are available.
     
-    Args:
-        args: Command line arguments
+    Returns:
+        bool: True if voice dependencies are available, False otherwise
     """
+    try:
+        # Try to import required packages
+        import sounddevice
+        # If we get here, the import was successful
+        logger.info("Voice dependencies are available")
+        return True
+    except (ImportError, OSError) as e:
+        logger.warning(f"Voice dependencies not available: {e}")
+        logger.warning("Voice and TTS features will be disabled")
+        logger.info("To enable voice features, install the required dependencies:")
+        logger.info("  sudo apt-get install portaudio19-dev")
+        logger.info("  pip install sounddevice")
+        return False
+
+def start_robot(args):
+    """Start the Duck Robot with the specified configuration."""
     try:
         # Ensure ONNX model exists
         onnx_path = ensure_onnx_model(args.onnx_model)
+        
+        # Check if voice dependencies are available
+        voice_available = check_voice_deps()
+        
+        # Disable voice features if dependencies aren't available
+        if args.voice and not voice_available:
+            logger.warning("Voice command recognition requested but dependencies missing - disabling voice features")
+            args.voice = False
+        
+        if args.tts and not voice_available:
+            logger.warning("Text-to-speech requested but dependencies missing - disabling TTS features")
+            args.tts = False
         
         # Check Ollama if using it
         if args.vlm_type == "ollama":
@@ -97,13 +142,27 @@ def start_robot(args):
                 return False
             
             if args.ollama_model:
-                # Could check if the model exists and pull if needed
+                # Check if the model exists and pull if needed
                 from ollama import OllamaManager
                 manager = OllamaManager()
                 
                 if not manager.model_exists(args.ollama_model):
-                    logger.info(f"Pulling Ollama model {args.ollama_model}...")
-                    manager.pull_model(args.ollama_model)
+                    logger.info(f"Ollama model {args.ollama_model} not found. You need to pull it first.")
+                    logger.info(f"Run: ollama pull {args.ollama_model}")
+                    return False
+        
+        # Determine system prompt
+        if CONFIG_AVAILABLE:
+            # Get appropriate system prompt based on mode
+            mode = "default"
+            if args.autonomous:
+                mode = "autonomous"
+            elif args.interactive:
+                mode = "interactive"
+            
+            system_prompt = get_system_prompt(mode, args.system_prompt)
+        else:
+            system_prompt = args.system_prompt or DEFAULT_SYSTEM_PROMPT
         
         # Construct the command to launch the robot
         cmd = [sys.executable, "-m", "vlm_integration"]
@@ -115,6 +174,7 @@ def start_robot(args):
         if args.vlm_type == "ollama":
             cmd.extend(["--ollama-model", args.ollama_model])
             cmd.extend(["--ollama-url", args.ollama_url])
+            cmd.extend(["--system-prompt", system_prompt])
             
             if args.no_auto_launch:
                 cmd.append("--no-auto-launch")
@@ -168,10 +228,22 @@ def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description="Start Duck Robot with all features")
     
+    # Use config defaults if available
+    default_ollama_model = config.get("ollama_model", "llava") if CONFIG_AVAILABLE else "llava"
+    default_tts_model = config.get("tts_model", "gemma3:4b") if CONFIG_AVAILABLE else "gemma3:4b"
+    default_use_voice = config.get("use_voice", False) if CONFIG_AVAILABLE else False
+    default_use_tts = config.get("use_tts", False) if CONFIG_AVAILABLE else False
+    default_use_ollama_stt = config.get("use_ollama_stt", False) if CONFIG_AVAILABLE else False
+    default_use_ollama_tts = config.get("use_ollama_tts", True) if CONFIG_AVAILABLE else True
+    default_autonomous = config.get("autonomous_mode", False) if CONFIG_AVAILABLE else False
+    default_interactive = config.get("interactive_mode", False) if CONFIG_AVAILABLE else False
+    default_onnx_model = config.get("onnx_model_path", "model.onnx") if CONFIG_AVAILABLE else "model.onnx"
+    default_duck_api = config.get("duck_api_url", "http://localhost:5000") if CONFIG_AVAILABLE else "http://localhost:5000"
+    
     # Basic configuration
-    parser.add_argument("--onnx-model", type=str, default="model.onnx", 
+    parser.add_argument("--onnx-model", type=str, default=default_onnx_model, 
                         help="Path to the ONNX model file")
-    parser.add_argument("--duck-api", type=str, default="http://localhost:5000", 
+    parser.add_argument("--duck-api", type=str, default=default_duck_api, 
                         help="URL for the Duck Robot API")
     
     # VLM configuration
@@ -179,12 +251,14 @@ def main():
                         help="Type of VLM to use")
     
     # Ollama options
-    parser.add_argument("--ollama-model", type=str, default="llava",
-                        help="Model name for Ollama (e.g., llava, bakllava)")
+    parser.add_argument("--ollama-model", type=str, default=default_ollama_model,
+                        help="Model name for Ollama (e.g., llava, bakllava, gemma3:4b)")
     parser.add_argument("--ollama-url", type=str, default="http://localhost:11434",
                         help="URL for the Ollama API")
     parser.add_argument("--no-auto-launch", action="store_true",
                         help="Don't automatically launch Ollama")
+    parser.add_argument("--system-prompt", type=str,
+                        help="System prompt for the VLM to provide context")
     
     # External VLM options
     parser.add_argument("--vlm-api", type=str, 
@@ -194,22 +268,22 @@ def main():
     
     # Mode options
     mode_group = parser.add_argument_group("Mode Options")
-    mode_group.add_argument("--autonomous", action="store_true",
+    mode_group.add_argument("--autonomous", action="store_true", default=default_autonomous,
                            help="Run in autonomous exploration mode")
-    mode_group.add_argument("--interactive", action="store_true",
+    mode_group.add_argument("--interactive", action="store_true", default=default_interactive,
                            help="Run in interactive mode")
     
     # Voice options
     voice_group = parser.add_argument_group("Voice Options")
-    voice_group.add_argument("--voice", action="store_true",
+    voice_group.add_argument("--voice", action="store_true", default=default_use_voice,
                             help="Enable voice command recognition")
-    voice_group.add_argument("--tts", action="store_true",
+    voice_group.add_argument("--tts", action="store_true", default=default_use_tts,
                             help="Enable text-to-speech")
-    voice_group.add_argument("--tts-model", type=str, default="gemma3:4b",
+    voice_group.add_argument("--tts-model", type=str, default=default_tts_model,
                             help="Model to use for TTS")
-    voice_group.add_argument("--ollama-stt", action="store_true",
+    voice_group.add_argument("--ollama-stt", action="store_true", default=default_use_ollama_stt,
                             help="Use Ollama for speech recognition")
-    voice_group.add_argument("--ollama-tts", action="store_true",
+    voice_group.add_argument("--ollama-tts", action="store_true", default=default_use_ollama_tts,
                             help="Use Ollama for text-to-speech")
     
     # Other options

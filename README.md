@@ -195,46 +195,73 @@ flowchart TD
 
 ## Usage
 
-### Running with Ollama (Local VLM)
+### Quick Start
+
+1. Install Ollama from [ollama.ai](https://ollama.ai)
+2. Pull the required vision model:
+   ```bash
+   ollama pull llava
+   ```
+3. Run the system using the convenient start_robot.py script:
+   ```bash
+   python start_robot.py --autonomous --voice --tts
+   ```
+   
+   This script will:
+   - Check for the ONNX model in the current directory
+   - Ensure Ollama is running (but won't install it)
+   - Start the MuJoCo simulation
+   - Enable autonomous exploration
+   - Enable voice commands and text-to-speech
+
+### Running with Ollama
+
+### Prerequisites
+
+1. Install Ollama from [ollama.ai](https://ollama.ai)
+2. Make sure you have the required models:
+   ```bash
+   ollama pull llava  # For the basic vision model
+   ollama pull bakllava  # For higher quality vision capabilities
+   ```
+3. Ensure your model.onnx file is in the root directory
+
+### Basic Usage
+
+Start the Duck Robot with Ollama as the VLM provider:
 
 ```bash
-# Start with default settings
-uv run ollama-run
-
-# With specific model
-uv run ollama-run --ollama-model=llava-next
-
-# Check available Ollama models
-uv run ollama-manager list
-
-# Pull a specific model
-uv run ollama-manager pull llava
+python -m vlm_integration --vlm-type ollama --ollama-model llava
 ```
 
-### With Voice Commands and TTS
+With a custom system prompt:
 
 ```bash
-# Enable voice commands with text-to-speech
-uv run ollama-run --voice --tts
-
-# Use Ollama for speech recognition and TTS
-uv run ollama-run --voice --tts --ollama-stt --ollama-tts
-
-# Test voice integration separately
-uv run voice-test
+python -m vlm_integration --vlm-type ollama --ollama-model llava --system-prompt "You are a helpful Duck Robot assistant that can see through a camera and respond to commands. You can move forward, backward, turn left or right, and look around."
 ```
 
-### Autonomous Exploration Mode
+### Voice Commands
+
+To enable voice commands:
 
 ```bash
-# Start autonomous exploration
-uv run autonomous
+python -m vlm_integration --vlm-type ollama --ollama-model llava --voice --tts
+```
 
-# With voice commands for interruption
-uv run autonomous --voice --tts
+### Autonomous Mode
 
-# Specify exploration parameters
-uv run autonomous --ollama-model=llava-next --voice --tts
+To start in autonomous exploration mode:
+
+```bash
+python -m vlm_integration --vlm-type ollama --ollama-model llava --autonomous
+```
+
+### Combined Features
+
+Full featured setup with all capabilities:
+
+```bash
+python -m vlm_integration --vlm-type ollama --ollama-model llava --voice --tts --autonomous --system-prompt "You are a helpful Duck Robot assistant that explores the environment autonomously and can respond to voice commands. You can see through your camera and describe what you see."
 ```
 
 ### Running with External VLM API
@@ -351,3 +378,74 @@ For deploying on the actual robot:
 ## License
 
 [MIT License](LICENSE)
+
+## Configuration
+
+You can configure the Duck Robot system in several ways:
+
+### 1. Using the Configuration File
+
+The system uses a central `config.py` file that defines default settings. You can customize these settings by creating a user configuration file:
+
+1. Create a directory for your settings:
+   ```bash
+   mkdir -p ~/.duck_robot
+   ```
+
+2. Create a configuration file based on the example:
+   ```bash
+   cp user_config_example.py ~/.duck_robot/config.py
+   ```
+
+3. Edit the file to specify your preferred models and settings:
+   ```python
+   # Use Gemma 3 instead of llava
+   ollama_model = "gemma3:4b"
+   
+   # Enable voice and TTS by default
+   use_voice = True
+   use_tts = True
+   ```
+
+### 2. Using Environment Variables
+
+You can also set configuration using environment variables:
+
+```bash
+# Set Gemma 3 as the default model
+export DUCK_OLLAMA_MODEL=gemma3:4b
+
+# Enable voice commands and TTS
+export DUCK_USE_VOICE=true
+export DUCK_USE_TTS=true
+
+# Run with these settings
+python start_robot.py
+```
+
+### 3. Using Command Line Arguments
+
+Command line arguments override both environment variables and the configuration file:
+
+```bash
+python start_robot.py --ollama-model gemma3:4b --voice --tts
+```
+
+### Available Model Options
+
+The following models are available in the configuration:
+
+#### Vision Language Models
+- `llava` - Basic vision-language model
+- `bakllava` - Enhanced vision capabilities
+- `llava-next` - Latest version with improved performance
+- `gemma3:4b` - Smaller model suitable for TTS and STT
+- `gemma2:9b` - Mid-sized model with good vision capabilities
+
+#### Text-to-Speech Models
+- `gemma3:4b` - Lightweight model for TTS
+- `mistral:7b` - Mid-sized model for better TTS
+
+#### Speech-to-Text Models
+- `whisper:tiny` through `whisper:large` - Various sizes of Whisper
+- `gemma3:4b` - Ollama-based speech recognition

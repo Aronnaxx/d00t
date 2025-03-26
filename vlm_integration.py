@@ -23,14 +23,6 @@ try:
 except ImportError:
     OLLAMA_MANAGER_AVAILABLE = False
 
-# Try to import voice integration
-try:
-    from voice_integration import VoiceCommandProcessor
-    VOICE_INTEGRATION_AVAILABLE = True
-except ImportError:
-    VOICE_INTEGRATION_AVAILABLE = False
-    logger.warning("Voice integration module not found. Install voice_integration.py for voice command capabilities.")
-
 # Set up logging with detailed format for debugging
 logging.basicConfig(
     level=logging.INFO,
@@ -42,20 +34,98 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Define flag for voice integration availability
+VOICE_INTEGRATION_AVAILABLE = None  # Will be set when needed
+
+def check_voice_integration():
+    """Check if voice integration is available.
+    
+    Returns:
+        bool: True if voice integration is available, False otherwise
+    """
+    global VOICE_INTEGRATION_AVAILABLE
+    
+    # If we've already checked, return the cached result
+    if VOICE_INTEGRATION_AVAILABLE is not None:
+        return VOICE_INTEGRATION_AVAILABLE
+    
+    try:
+        # Try to import the voice integration module
+        from voice_integration import VoiceCommandProcessor
+        VOICE_INTEGRATION_AVAILABLE = True
+        logger.info("Voice integration available")
+    except (ImportError, OSError) as e:
+        VOICE_INTEGRATION_AVAILABLE = False
+        logger.warning(f"Voice integration not available: {e}")
+        
+    return VOICE_INTEGRATION_AVAILABLE
+
+def get_voice_processor(callback, use_tts, **kwargs):
+    """Get a VoiceCommandProcessor instance if available.
+    
+    Args:
+        callback: Callback function for voice commands
+        use_tts: Whether to use text-to-speech
+        **kwargs: Additional arguments for VoiceCommandProcessor
+        
+    Returns:
+        VoiceCommandProcessor or None: Voice processor instance if available
+    """
+    if not check_voice_integration():
+        # Create a dummy processor
+        logger.warning("Creating dummy voice processor")
+        return DummyVoiceProcessor()
+    
+    # Import and create a real voice processor
+    from voice_integration import VoiceCommandProcessor
+    return VoiceCommandProcessor(
+        command_callback=callback,
+        use_tts=use_tts,
+        **kwargs
+    )
+
+class DummyVoiceProcessor:
+    """Dummy voice processor for when voice integration is not available."""
+    
+    def __init__(self):
+        """Initialize the dummy voice processor."""
+        self.running = False
+        logger.warning("Using dummy voice processor - voice features are disabled")
+    
+    def start(self):
+        """Start the dummy voice processor."""
+        logger.warning("Voice integration is not available")
+        return False
+    
+    def stop(self):
+        """Stop the dummy voice processor."""
+        return False
+    
+    def speak(self, text):
+        """Speak the given text."""
+        logger.warning(f"Text-to-speech is not available. Would say: {text}")
+        return False
+    
+    def is_running(self):
+        """Check if the dummy voice processor is running."""
+        return False
+
 class OllamaClient:
     """Client for interacting with Ollama API for vision models."""
     
-    def __init__(self, base_url: str = "http://localhost:11434", model_name: str = "llava"):
+    def __init__(self, base_url: str = "http://localhost:11434", model_name: str = "llava", system_prompt: Optional[str] = None):
         """Initialize the Ollama client.
         
         Args:
             base_url: URL for the Ollama API
             model_name: Name of the model to use (e.g., llava, bakllava)
+            system_prompt: System prompt to provide context to the model
         """
         self.base_url = base_url
         self.model_name = model_name
         self.api_url = f"{base_url}/api/generate"
         self.ollama_manager = None
+        self.system_prompt = system_prompt
         
         # If ollama.py is available, use it to manage Ollama
         if OLLAMA_MANAGER_AVAILABLE:
@@ -64,7 +134,8 @@ class OllamaClient:
                 self.ollama_manager = start_ollama_server(
                     model_name=model_name,
                     host=host,
-                    port=port
+                    port=port,
+                    system_prompt=system_prompt
                 )
                 logger.info(f"Using Ollama manager with model {model_name}")
                 return
@@ -120,7 +191,8 @@ class OllamaClient:
                 response = self.ollama_manager.query_model(
                     model_name=self.model_name,
                     prompt=prompt,
-                    images=[img_str]
+                    images=[img_str],
+                    system_prompt=self.system_prompt
                 )
                 
                 return {
@@ -145,6 +217,10 @@ class OllamaClient:
                 "images": [img_str],
                 "stream": False
             }
+            
+            # Add system prompt if available
+            if self.system_prompt:
+                payload["system"] = self.system_prompt
             
             # Make the request
             response = requests.post(self.api_url, json=payload)
@@ -390,7 +466,8 @@ class VLMDuckController:
         use_tts: bool = False,
         use_ollama_stt: bool = False,
         use_ollama_tts: bool = True,
-        autonomous_mode: bool = False
+        autonomous_mode: bool = False,
+        system_prompt: Optional[str] = None
     ):
         """Initialize the VLM Duck Controller.
         
@@ -408,6 +485,7 @@ class VLMDuckController:
             use_ollama_stt: Whether to use Ollama for speech recognition
             use_ollama_tts: Whether to use Ollama for text-to-speech
             autonomous_mode: Whether to start in autonomous mode
+            system_prompt: System prompt to provide context to the VLM
         """
         self.duck_client = DuckRobotClient(api_url=duck_api_url)
         self.vlm_type = vlm_type
@@ -420,26 +498,22 @@ class VLMDuckController:
         self.use_ollama_tts = use_ollama_tts
         self.tts_model = tts_model
         self.autonomous_mode = autonomous_mode
+        self.system_prompt = system_prompt
         
         # Initialize Ollama client if using Ollama
         self.ollama_client = None
         if vlm_type == "ollama":
             self.ollama_client = OllamaClient(
                 base_url=ollama_url,
-                model_name=ollama_model
+                model_name=ollama_model,
+                system_prompt=system_prompt
             )
         
         # Initialize voice command processor if enabled
         self.voice_processor = None
         if use_voice and VOICE_INTEGRATION_AVAILABLE:
             logger.info("Initializing voice command processor")
-            self.voice_processor = VoiceCommandProcessor(
-                command_callback=self._process_voice_command,
-                use_tts=use_tts,
-                use_microphone=True,
-                use_ollama_stt=use_ollama_stt,
-                use_ollama_tts=use_ollama_tts
-            )
+            self.voice_processor = get_voice_processor(self._process_voice_command, use_tts)
         elif use_voice:
             logger.warning("Voice integration requested but not available. Install voice_integration.py")
         
@@ -836,6 +910,7 @@ def main() -> None:
     parser.add_argument("--ollama-url", type=str, default="http://localhost:11434", help="URL for the Ollama API")
     parser.add_argument("--ollama-model", type=str, default="llava", help="Model name for Ollama (e.g., llava, bakllava)")
     parser.add_argument("--no-auto-launch", action="store_true", help="Don't automatically launch Ollama")
+    parser.add_argument("--system-prompt", type=str, help="System prompt to provide context to the VLM")
     
     # Simulation options
     parser.add_argument("--onnx-model", type=str, default="model.onnx", help="Path to the ONNX model file")
@@ -875,7 +950,8 @@ def main() -> None:
             use_tts=args.tts,
             use_ollama_stt=args.ollama_stt,
             use_ollama_tts=args.ollama_tts,
-            autonomous_mode=args.autonomous
+            autonomous_mode=args.autonomous,
+            system_prompt=args.system_prompt
         )
     else:
         # External VLM API
@@ -893,7 +969,8 @@ def main() -> None:
             use_tts=args.tts,
             use_ollama_stt=args.ollama_stt,
             use_ollama_tts=args.ollama_tts,
-            autonomous_mode=args.autonomous
+            autonomous_mode=args.autonomous,
+            system_prompt=args.system_prompt
         )
     
     # Initialize simulation

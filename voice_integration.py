@@ -63,6 +63,26 @@ WHISPER_MODEL_NAME = "base"  # Options: tiny, base, small, medium, large
 OLLAMA_STT_MODEL_NAME = "gemma3:4b"
 OLLAMA_TTS_MODEL_NAME = "gemma3:4b"
 
+# Flag to track if voice integration is available
+VOICE_INTEGRATION_AVAILABLE = True
+missing_dependencies = []
+
+try:
+    import torch
+except ImportError:
+    VOICE_INTEGRATION_AVAILABLE = False
+    missing_dependencies.append("torch")
+    logger.warning("Missing dependency: torch. Some voice features may be limited.")
+
+# Try to import whisper if available
+try:
+    import whisper
+    WHISPER_AVAILABLE = True
+except ImportError:
+    WHISPER_AVAILABLE = False
+    missing_dependencies.append("whisper")
+    logger.warning("Missing dependency: whisper. Local speech recognition will be disabled.")
+
 class AudioBuffer:
     """
     Manages audio data and provides voice activity detection
