@@ -1,7 +1,7 @@
 [project]
 name = "open_duck_vlm"
 version = "0.1.0"
-description = "VLM integration for Open Duck Robot"
+description = "VLM integration for Open Duck Robot with voice commands and autonomous exploration"
 readme = "README.md"
 authors = [
     {name = "Your Name", email = "your.email@example.com"}
@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.8"
 dependencies = [
     "flask>=2.0.0",
+    "flask-cors>=3.0.0",
     "Pillow>=9.0.0",
     "numpy>=1.20.0",
     "requests>=2.25.0",
@@ -16,13 +17,22 @@ dependencies = [
     "onnxruntime>=1.12.0",
     "opencv-python>=4.5.0",
     "mujoco>=2.3.3",
+    "sounddevice>=0.4.5",
+    "soundfile>=0.12.1",
+    "scipy>=1.10.0",
+    "openai-whisper>=20231117",
 ]
 
 [project.scripts]
+duck-server = "main:main"
 ollama-run = "vlm_integration:main"
 external-run = "vlm_integration:main"
 interactive = "vlm_integration:main"
+autonomous = "vlm_integration:main"
+voice = "vlm_integration:main"
 ollama-manager = "ollama:main"
+voice-test = "voice_integration:main"
+start-robot = "start_robot:main"
 
 [project.optional-dependencies]
 dev = [
