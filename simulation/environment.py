@@ -59,18 +59,22 @@ def initialize_world():
         World: The simulation world object
     """
     # Import modules after simulation is initialized
-    from omni.isaac.core import World
+    from isaaclab.envs import ManagerBasedRLEnv 
+    from isaaclab.terrains import TerrainImporterCfg
     
     logger.info("Initializing simulation world")
     
-    # Create a simulation world with meter units
-    world = World(stage_units_in_meters=1.0)
+    # Create a simple world configuration (based on test.py)
+    from isaaclab_tasks.manager_based.locomotion.velocity.config.h1.rough_env_cfg import H1RoughEnvCfg_PLAY
+    env_cfg = H1RoughEnvCfg_PLAY()
+    env_cfg.scene.num_envs = 1
+    env_cfg.curriculum = None
     
-    # Initialize physics simulation
-    world.initialize_simulation()
+    # Create the environment (which includes a world)
+    env = ManagerBasedRLEnv(cfg=env_cfg)
     
     logger.info("Simulation world initialized with physics")
-    return world
+    return env  # Return the environment instead of just the world
 
 if __name__ == "__main__":
     # For testing this module independently
@@ -81,11 +85,12 @@ if __name__ == "__main__":
     
     # Load stage and initialize world (this will import omni modules)
     load_warehouse_stage()
-    world = initialize_world()
+    env = initialize_world()
     
     # Keep the app running for a few seconds to verify
     for _ in range(100):
-        world.step(render=True)
+        # Step the env instead of world
+        env.step(None)
         time.sleep(0.01)
     
     app.close()
