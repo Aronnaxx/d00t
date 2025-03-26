@@ -1,0 +1,50 @@
+[project]
+name = "d00t"
+version = "0.1.0"
+description = "Isaac Lab robot integration with ONNX model inference"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.20.0",
+    "opencv-python>=4.5.0",
+    "onnxruntime>=1.12.0",
+    "onnx>=1.12.0",
+    "matplotlib>=3.5.0",
+    "isaaclab[isaacsim,all]>=2.0.2",
+    
+]
+
+[project.optional-dependencies]
+dev = [
+    "black>=23.0.0",
+    "pylint>=2.17.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.envs.default]
+dependencies = [
+    "isaaclab[isaacsim,all]>=2.0.2",
+]
+python = "3.10"
+
+[tool.hatch.envs.default.scripts]
+main = "python main.py"
+create-robot = "python create_test_robot.py"
+run-env = "python simulation/environment.py"
+run-camera = "python perception/camera.py"
+run-model = "python perception/model_inference.py"
+run-controller = "python control/controller.py"
+run-telemetry = "python robot_logging/telemetry.py"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+# Configure build to include all project modules
+[tool.hatch.build.targets.wheel]
+packages = ["simulation", "perception", "control", "robot_logging"]
+
+# Additional NVIDIA index - this will be used when installing with UV via:
+# uv pip install -e . --extra-index-url https://pypi.nvidia.com

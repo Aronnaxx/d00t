@@ -1,7 +1,3 @@
-Awesome. I’ll put together a full project scaffold using the latest Isaac Lab main branch with UV package management. It'll cover launching the Warehouse environment, loading your robot, integrating real-time ONNX inference, adding camera streaming for VLM input, and logging all the telemetry (trajectories, IMU, camera) for training improvements—built in a modular, clean, and maintainable way.
-
-I’ll circle back once it’s all mapped out and ready for you to dive in.
-
 # Integrating a Custom Robot into NVIDIA Isaac Lab (Using UV Package Manager)
 
 **Goal:** Create a UV-managed Python project to integrate a custom robot (URDF/MJCF/USD) into NVIDIA Isaac Lab (latest main branch) and enable simulation with advanced features. We will cover installation, launching a Warehouse environment, loading a custom robot, external control, camera streaming to a vision-language model (MoonDream-V2), real-time ONNX model inference for autonomy, and comprehensive telemetry logging.

@@ -1,0 +1,3 @@
+[submodule "submodules/isaaclab"]
+	path = submodules/isaaclab
+	url = https://github.com/isaac-sim/IsaacLab.git
