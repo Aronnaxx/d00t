@@ -1,3 +1,6 @@
 [submodule "submodules/isaaclab"]
 	path = submodules/isaaclab
 	url = https://github.com/isaac-sim/IsaacLab.git
+[submodule "submodules/open_duck_playground"]
+	path = submodules/open_duck_playground
+	url = https://github.com/apirrone/Open_Duck_Playground.git
