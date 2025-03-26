@@ -1,17 +1,19 @@
 [project]
-name = "d00t"
+name = "open_duck_vlm"
 version = "0.1.0"
-description = "Isaac Lab robot integration with ONNX model inference"
+description = "VLM integration for controlling Open Duck robot in MuJoCo simulation"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.8"
 dependencies = [
     "numpy>=1.20.0",
     "opencv-python>=4.5.0",
     "onnxruntime>=1.12.0",
-    "onnx>=1.12.0",
-    "matplotlib>=3.5.0",
-    "isaaclab[isaacsim,all]>=2.0.2",
-    
+    "flask>=2.0.0",
+    "flask-cors>=3.0.0",
+    "mujoco>=2.3.0",
+    "requests>=2.25.0",
+    "pillow>=8.0.0",
+    "etils>=1.0.0"
 ]
 
 [project.optional-dependencies]
@@ -26,25 +28,21 @@ build-backend = "hatchling.build"
 
 [tool.hatch.envs.default]
 dependencies = [
-    "isaaclab[isaacsim,all]>=2.0.2",
+    "mujoco>=2.3.0",
 ]
-python = "3.10"
+python = "3.8"
 
 [tool.hatch.envs.default.scripts]
 main = "python main.py"
-create-robot = "python create_test_robot.py"
-run-env = "python simulation/environment.py"
-run-camera = "python perception/camera.py"
-run-model = "python perception/model_inference.py"
-run-controller = "python control/controller.py"
-run-telemetry = "python robot_logging/telemetry.py"
+client = "python client.py"
+vlm-test = "python vlm_integration.py"
 
 [tool.hatch.metadata]
 allow-direct-references = true
 
 # Configure build to include all project modules
 [tool.hatch.build.targets.wheel]
-packages = ["simulation", "perception", "control", "robot_logging"]
+packages = ["playground", "client", "vlm_integration"]
 
 # Additional NVIDIA index - this will be used when installing with UV via:
 # uv pip install -e . --extra-index-url https://pypi.nvidia.com

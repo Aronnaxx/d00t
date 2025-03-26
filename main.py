@@ -1,309 +1,351 @@
-#!/usr/bin/env python3
-# main.py - Main entry point for robot simulation
-"""
-This script loads an OpenDuckMini robot into a warehouse environment and controls it using a trained ONNX model.
-It also allows for keyboard/mouse control.
-
-Usage:
-    uv run main.py --robot_usd=assets/robot.usd --model_file=path/to/model.onnx
-"""
-
-import os
-import time
-import logging
 import argparse
-import numpy as np
-import torch
+import logging
+import os
+import threading
+import time
+import traceback
+from typing import Dict, List, Optional, Tuple, Any, Union
 
-# Set up logging with file and console output
+import numpy as np
+import flask
+from flask import Flask, request, jsonify
+import cv2
+import base64
+from flask_cors import CORS
+
+# Import the mujoco inference machinery
+from playground.open_duck_mini_v2.mujoco_infer import MjInfer
+
+# Set up logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("robot_sim.log"),
-        logging.StreamHandler()
-    ]
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger("main")
+logger = logging.getLogger(__name__)
 
-"""Launch Isaac Sim Simulator first."""
-from isaaclab.app import AppLauncher
+app = Flask(__name__)
+CORS(app)  # Enable cross-origin requests
 
-# Add command line arguments
-parser = argparse.ArgumentParser(description="OpenDuckMini in warehouse with ONNX model")
-# Add app launcher arguments
-AppLauncher.add_app_launcher_args(parser)
-# Add custom arguments
-parser.add_argument("--robot_usd", type=str, default="assets/robot.usd", 
-                   help="Path to robot USD file")
-parser.add_argument("--model_file", type=str, default="model.onnx",
-                   help="Path to ONNX model file")
-parser.add_argument("--duration", type=float, default=300.0,
-                   help="Duration to run the demo in seconds")
-# Parse arguments
-args = parser.parse_args()
+# Global variables
+mj_infer: Optional[MjInfer] = None
+mj_infer_thread: Optional[threading.Thread] = None
+running = False
+latest_image = None
+command_queue = []
+current_command = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # Default command vector
+image_lock = threading.Lock()
 
-# Launch the simulator app
-logger.info("Launching Isaac Sim...")
-app_launcher = AppLauncher(args)
-simulation_app = app_launcher.app
-
-"""Rest of the application follows."""
-# Import modules after simulation is started
-import carb
-import omni
-from omni.kit.viewport.utility import get_viewport_from_window_name
-from perception.model_inference import load_onnx_model, preprocess_image, run_inference, create_dummy_onnx_model
-from simulation.environment import load_warehouse_stage, initialize_world
-from simulation.robot_loader import load_robot
-from control.controller import get_robot_articulation, command_differential_drive
-
-class RobotDemo:
-    """Main class for OpenDuckMini demo with ONNX model and keyboard control."""
+def capture_frame(width: int = 640, height: int = 480) -> Optional[str]:
+    """Capture the current frame from the MuJoCo viewer and encode as base64."""
+    global latest_image, mj_infer
     
-    def __init__(self, robot_usd_path="assets/robot.usd", model_path="model.onnx"):
-        """Initialize the demo.
-        
-        Args:
-            robot_usd_path: Path to the robot USD file
-            model_path: Path to the ONNX model file
-        """
-        logger.info("Initializing OpenDuckMini demo")
-        
-        # Load the warehouse stage
-        logger.info("Loading warehouse environment")
-        load_warehouse_stage()
-        
-        # Initialize the simulation world
-        logger.info("Initializing simulation world")
-        self.env = initialize_world()
-        
-        # Create dummy ONNX model if needed
-        if not os.path.exists(model_path):
-            logger.warning(f"ONNX model not found at {model_path}, creating a dummy model")
-            create_dummy_onnx_model(model_path)
-        
-        # Load the ONNX model
-        logger.info(f"Loading ONNX model from {model_path}")
-        self.model_session, self.input_name, self.input_shape = load_onnx_model(model_path)
-        if self.model_session is None:
-            logger.error("Failed to load ONNX model")
-        
-        # Load the robot
-        logger.info(f"Loading robot from {robot_usd_path}")
-        if not os.path.exists(robot_usd_path):
-            logger.warning(f"Robot USD file not found at {robot_usd_path}, check if create_test_robot.py exists")
-            try:
-                from create_test_robot import main as create_robot
-                create_robot()
-            except ImportError:
-                logger.error("Could not import create_test_robot.py, robot loading may fail")
-        
-        # Load the robot into the simulation
-        self.robot_loaded = load_robot(
-            robot_usd_path,
-            prim_path="/World/Robot", 
-            translation=(0, 0, 0.1),  # Slight elevation to avoid ground penetration
-            orientation=(0, 0, 0, 1)   # Default orientation
+    if mj_infer is None:
+        return None
+    
+    try:
+        with image_lock:
+            if latest_image is None:
+                return None
+            
+            # Convert to RGB format for display
+            img_rgb = cv2.cvtColor(latest_image, cv2.COLOR_BGR2RGB)
+            
+            # Resize the image if needed
+            if img_rgb.shape[0] != height or img_rgb.shape[1] != width:
+                img_rgb = cv2.resize(img_rgb, (width, height))
+            
+            # Encode the image as PNG and convert to base64
+            _, buffer = cv2.imencode('.png', img_rgb)
+            img_str = base64.b64encode(buffer).decode('utf-8')
+            
+            return img_str
+    except Exception as e:
+        logger.error(f"Error capturing frame: {e}")
+        logger.error(traceback.format_exc())
+        return None
+
+def update_commands(new_commands: List[float]) -> None:
+    """Update the global command queue."""
+    global command_queue
+    command_queue.append(new_commands)
+    
+    # Keep only the last 5 commands
+    if len(command_queue) > 5:
+        command_queue.pop(0)
+
+def mj_thread_function() -> None:
+    """Thread function to run the MuJoCo simulation."""
+    global mj_infer, running, latest_image, command_queue, current_command
+    
+    logger.info("Starting MuJoCo thread")
+    
+    try:
+        while running:
+            # Update the commands if there are any in the queue
+            if command_queue:
+                current_command = command_queue.pop(0)
+                mj_infer.commands = current_command
+                logger.debug(f"Updated command to: {current_command}")
+            
+            # Try to grab the latest frame
+            img = mj_infer.data.render("rgb", 640, 480, camera="RearQuad")
+            with image_lock:
+                latest_image = img
+            
+            # Step the simulation
+            mj_infer.step()
+            
+            # Sleep to maintain a reasonable frame rate
+            time.sleep(0.01)
+    except Exception as e:
+        running = False
+        logger.error(f"Error in MuJoCo thread: {e}")
+        logger.error(traceback.format_exc())
+    
+    logger.info("MuJoCo thread stopped")
+
+def initialize_mujoco(
+    model_path: str, 
+    reference_data: str, 
+    onnx_model_path: str, 
+    standing: bool = False
+) -> bool:
+    """Initialize the MuJoCo simulation."""
+    global mj_infer, mj_infer_thread, running
+    
+    try:
+        mj_infer = MjInfer(
+            model_path=model_path,
+            reference_data=reference_data,
+            onnx_model_path=onnx_model_path,
+            standing=standing
         )
         
-        if not self.robot_loaded:
-            logger.error("Failed to load robot, demo may not work correctly")
+        # Start the MuJoCo thread
+        running = True
+        mj_infer_thread = threading.Thread(target=mj_thread_function)
+        mj_infer_thread.daemon = True
+        mj_infer_thread.start()
         
-        # Wheel parameters for the differential drive controller
-        self.wheel_params = {
-            "left_joint_name": "left_wheel_joint",
-            "right_joint_name": "right_wheel_joint",
-            "axle_length": 0.5,     # Distance between wheels in meters
-            "wheel_radius": 0.1     # Wheel radius in meters
-        }
-        
-        # Get robot articulation for control
-        logger.info("Setting up robot control")
-        self.dc_interface, self.robot_art = get_robot_articulation("/World/Robot")
-        
-        if self.dc_interface is None or self.robot_art is None:
-            logger.error("Failed to get robot articulation, control will not work")
-        
-        # Initialize camera if needed for perception
-        try:
-            from perception.camera import initialize_camera, get_camera_frame
-            
-            self.camera = initialize_camera(
-                prim_path="/World/Robot/CameraSensor",
-                resolution=(640, 480),
-                position=[0.2, 0, 0.2],  # Forward and up from robot center
-                rotation=[0, -20, 0]     # Tilt down slightly
-            )
-            
-            if self.camera is not None:
-                logger.info("Camera initialized successfully")
-                self.get_camera_frame = get_camera_frame
-            else:
-                logger.warning("Failed to initialize camera")
-                self.get_camera_frame = None
-        except Exception as e:
-            logger.error(f"Error setting up camera: {e}")
-            self.camera = None
-            self.get_camera_frame = None
-        
-        # Set up keyboard/mouse control
-        self.setup_keyboard_control()
-        
-        # Initialize control parameters
-        self.use_model_control = True  # Toggle between model and keyboard control
-        self.linear_velocity = 0.0
-        self.angular_velocity = 0.0
-        
-        # Step the simulation a few times to ensure everything is initialized
-        logger.info("Initializing simulation...")
-        for _ in range(10):
-            self.env.step(None)
-    
-    def setup_keyboard_control(self):
-        """Set up keyboard control for the robot."""
-        logger.info("Setting up keyboard control")
-        
-        # Set up keyboard interface
-        self._input = carb.input.acquire_input_interface()
-        self._keyboard = omni.appwindow.get_default_app_window().get_keyboard()
-        self._sub_keyboard = self._input.subscribe_to_keyboard_events(self._keyboard, self._on_keyboard_event)
-        
-        # Define key mappings 
-        self.key_to_control = {
-            "UP": (0.5, 0.0),      # Forward
-            "DOWN": (-0.3, 0.0),    # Backward
-            "LEFT": (0.0, 0.5),     # Turn left
-            "RIGHT": (0.0, -0.5),   # Turn right
-            "w": (0.5, 0.0),        # Forward (WASD alternative)
-            "s": (-0.3, 0.0),       # Backward (WASD alternative)
-            "a": (0.0, 0.5),        # Turn left (WASD alternative)
-            "d": (0.0, -0.5),       # Turn right (WASD alternative)
-            "SPACE": (0.0, 0.0)     # Stop
-        }
-        
-        # Tracking currently pressed keys
-        self.active_keys = set()
-        
-        logger.info("Keyboard controls:")
-        logger.info("  Arrow keys / WASD: Move robot")
-        logger.info("  Space: Stop robot")
-        logger.info("  M: Toggle between model control and keyboard control")
-        logger.info("  ESC: Exit demo")
-    
-    def _on_keyboard_event(self, event):
-        """Handle keyboard events."""
-        # Key press event
-        if event.type == carb.input.KeyboardEventType.KEY_PRESS:
-            # Add key to active keys set
-            self.active_keys.add(event.input.name)
-            
-            # Handle special keys
-            if event.input.name == "ESCAPE":
-                logger.info("ESC pressed, exiting demo")
-                simulation_app.close()
-            elif event.input.name == "m":
-                # Toggle between model and keyboard control
-                self.use_model_control = not self.use_model_control
-                logger.info(f"Switched to {'model' if self.use_model_control else 'keyboard'} control")
-        
-        # Key release event
-        elif event.type == carb.input.KeyboardEventType.KEY_RELEASE:
-            # Remove key from active keys
-            if event.input.name in self.active_keys:
-                self.active_keys.remove(event.input.name)
-    
-    def update_keyboard_control(self):
-        """Update robot control based on currently pressed keys."""
-        # Default to zero velocity
-        linear_vel = 0.0
-        angular_vel = 0.0
-        
-        # Process all active keys (allowing for combinations)
-        for key in self.active_keys:
-            if key in self.key_to_control:
-                lin, ang = self.key_to_control[key]
-                linear_vel += lin
-                angular_vel += ang
-        
-        # Update control values
-        self.linear_velocity = linear_vel
-        self.angular_velocity = angular_vel
-    
-    def run_demo(self, duration=60.0):
-        """Run the demo for the specified duration.
-        
-        Args:
-            duration: Time in seconds to run the demo
-        """
-        logger.info(f"Starting demo for {duration} seconds")
-        
-        start_time = time.time()
-        frame_count = 0
-        
-        try:
-            while simulation_app.is_running() and (time.time() - start_time) < duration:
-                # Get simulation time
-                sim_time = time.time() - start_time
-                
-                # Update control from keyboard if using keyboard control
-                if not self.use_model_control:
-                    self.update_keyboard_control()
-                
-                # If using model control and camera is available, use ONNX model for control
-                elif self.use_model_control and self.camera is not None and self.get_camera_frame is not None and self.model_session is not None:
-                    # Capture camera frame
-                    frame = self.get_camera_frame(self.camera)
-                    if frame is not None:
-                        # Run ONNX inference
-                        processed_frame = preprocess_image(frame)
-                        v_lin, v_ang = run_inference(self.model_session, self.input_name, processed_frame)
-                        self.linear_velocity = v_lin
-                        self.angular_velocity = v_ang
-                
-                # Print command occasionally
-                if frame_count % 30 == 0:
-                    control_mode = "Model" if self.use_model_control else "Keyboard"
-                    logger.info(f"[{sim_time:.2f}s] {control_mode} control: v_lin={self.linear_velocity:.2f} m/s, v_ang={self.angular_velocity:.2f} rad/s")
-                
-                # Command the robot if control is available
-                if self.dc_interface is not None and self.robot_art is not None:
-                    command_differential_drive(
-                        self.dc_interface,
-                        self.robot_art,
-                        self.linear_velocity,
-                        self.angular_velocity,
-                        self.wheel_params
-                    )
-                
-                # Step the simulation
-                self.env.step(None)
-                frame_count += 1
-                
-                # Small sleep to avoid maxing CPU
-                time.sleep(0.01)
-                
-        except KeyboardInterrupt:
-            logger.info("Simulation interrupted by user")
-        except Exception as e:
-            logger.error(f"Error in simulation loop: {str(e)}")
-            import traceback
-            logger.error(traceback.format_exc())
-        
-        logger.info("Demo completed")
+        logger.info("MuJoCo initialization successful")
+        return True
+    except Exception as e:
+        logger.error(f"Error initializing MuJoCo: {e}")
+        logger.error(traceback.format_exc())
+        return False
 
+def shutdown_mujoco() -> None:
+    """Shutdown the MuJoCo simulation."""
+    global mj_infer, mj_infer_thread, running
+    
+    running = False
+    
+    if mj_infer_thread is not None:
+        mj_infer_thread.join(timeout=2.0)
+        mj_infer_thread = None
+    
+    mj_infer = None
+    logger.info("MuJoCo shutdown complete")
+
+# API routes
+@app.route('/status', methods=['GET'])
+def get_status() -> flask.Response:
+    """Get the status of the MuJoCo simulation."""
+    global mj_infer, running
+    
+    status = {
+        "running": running,
+        "initialized": mj_infer is not None,
+        "current_command": current_command
+    }
+    
+    return jsonify(status)
+
+@app.route('/initialize', methods=['POST'])
+def api_initialize_mujoco() -> flask.Response:
+    """Initialize the MuJoCo simulation."""
+    global mj_infer
+    
+    if mj_infer is not None:
+        return jsonify({"success": False, "error": "MuJoCo already initialized"})
+    
+    data = request.json
+    model_path = data.get('model_path', 'playground/open_duck_mini_v2/xmls/open_duck_mini_v2.xml')
+    reference_data = data.get('reference_data', 'playground/open_duck_mini_v2/data/polynomial_coefficients.pkl')
+    onnx_model_path = data.get('onnx_model_path', 'model.onnx')
+    standing = data.get('standing', False)
+    
+    if not os.path.exists(onnx_model_path):
+        return jsonify({"success": False, "error": f"ONNX model file not found: {onnx_model_path}"})
+    
+    success = initialize_mujoco(model_path, reference_data, onnx_model_path, standing)
+    
+    return jsonify({"success": success})
+
+@app.route('/shutdown', methods=['POST'])
+def api_shutdown_mujoco() -> flask.Response:
+    """Shutdown the MuJoCo simulation."""
+    global mj_infer
+    
+    if mj_infer is None:
+        return jsonify({"success": False, "error": "MuJoCo not initialized"})
+    
+    shutdown_mujoco()
+    
+    return jsonify({"success": True})
+
+@app.route('/command', methods=['POST'])
+def api_send_command() -> flask.Response:
+    """Send a command to the MuJoCo simulation."""
+    global mj_infer
+    
+    if mj_infer is None:
+        return jsonify({"success": False, "error": "MuJoCo not initialized"})
+    
+    data = request.json
+    command_type = data.get('command_type', 'direct')
+    
+    if command_type == 'direct':
+        # Format expected: [vx, vy, omega, neck_pitch, head_pitch, head_yaw, head_roll]
+        command = data.get('command', [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        
+        # Validate command
+        if not isinstance(command, list) or len(command) != 7:
+            return jsonify({
+                "success": False, 
+                "error": "Command must be a list of 7 floats: [vx, vy, omega, neck_pitch, head_pitch, head_yaw, head_roll]"
+            })
+        
+        update_commands(command)
+        return jsonify({"success": True})
+    
+    elif command_type == 'natural_language':
+        # Process natural language commands
+        nl_command = data.get('nl_command', '')
+        
+        # Simple mapping of commands to actions
+        if 'forward' in nl_command.lower():
+            cmd = [0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # Move forward
+        elif 'backward' in nl_command.lower():
+            cmd = [-0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # Move backward
+        elif 'left' in nl_command.lower():
+            if 'turn' in nl_command.lower():
+                cmd = [0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0]  # Turn left
+            else:
+                cmd = [0.0, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0]  # Strafe left
+        elif 'right' in nl_command.lower():
+            if 'turn' in nl_command.lower():
+                cmd = [0.0, 0.0, -0.5, 0.0, 0.0, 0.0, 0.0]  # Turn right
+            else:
+                cmd = [0.0, -0.1, 0.0, 0.0, 0.0, 0.0, 0.0]  # Strafe right
+        elif 'look up' in nl_command.lower():
+            cmd = [0.0, 0.0, 0.0, 0.5, -0.5, 0.0, 0.0]  # Look up
+        elif 'look down' in nl_command.lower():
+            cmd = [0.0, 0.0, 0.0, -0.3, 0.5, 0.0, 0.0]  # Look down
+        elif 'look left' in nl_command.lower():
+            cmd = [0.0, 0.0, 0.0, 0.0, 0.0, 0.8, 0.0]  # Look left
+        elif 'look right' in nl_command.lower():
+            cmd = [0.0, 0.0, 0.0, 0.0, 0.0, -0.8, 0.0]  # Look right
+        elif 'stop' in nl_command.lower():
+            cmd = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # Stop
+        else:
+            return jsonify({
+                "success": False,
+                "error": f"Could not parse natural language command: {nl_command}"
+            })
+        
+        update_commands(cmd)
+        return jsonify({
+            "success": True,
+            "parsed_command": cmd,
+            "nl_command": nl_command
+        })
+    
+    else:
+        return jsonify({
+            "success": False,
+            "error": f"Unknown command type: {command_type}"
+        })
+
+@app.route('/frame', methods=['GET'])
+def api_get_frame() -> flask.Response:
+    """Get the current frame from the MuJoCo viewer."""
+    global mj_infer
+    
+    if mj_infer is None:
+        return jsonify({"success": False, "error": "MuJoCo not initialized"})
+    
+    # Get the current frame
+    img_str = capture_frame()
+    
+    if img_str is None:
+        return jsonify({"success": False, "error": "Failed to capture frame"})
+    
+    return jsonify({
+        "success": True,
+        "image": img_str,
+        "timestamp": time.time()
+    })
+
+@app.route('/help', methods=['GET'])
+def api_help() -> flask.Response:
+    """Get API documentation."""
+    docs = {
+        "endpoints": [
+            {
+                "path": "/status",
+                "method": "GET",
+                "description": "Get the status of the MuJoCo simulation",
+                "parameters": None
+            },
+            {
+                "path": "/initialize",
+                "method": "POST",
+                "description": "Initialize the MuJoCo simulation",
+                "parameters": {
+                    "model_path": "Path to the XML model file (optional)",
+                    "reference_data": "Path to the reference data file (optional)",
+                    "onnx_model_path": "Path to the ONNX model file (required)",
+                    "standing": "Whether to start in standing mode (optional, default: false)"
+                }
+            },
+            {
+                "path": "/shutdown",
+                "method": "POST",
+                "description": "Shutdown the MuJoCo simulation",
+                "parameters": None
+            },
+            {
+                "path": "/command",
+                "method": "POST",
+                "description": "Send a command to the duck robot",
+                "parameters": {
+                    "command_type": "Type of command: 'direct' or 'natural_language'",
+                    "command": "For 'direct' type: Array of 7 floats [vx, vy, omega, neck_pitch, head_pitch, head_yaw, head_roll]",
+                    "nl_command": "For 'natural_language' type: A string describing the desired action"
+                }
+            },
+            {
+                "path": "/frame",
+                "method": "GET",
+                "description": "Get the current camera frame from the simulation",
+                "parameters": None
+            }
+        ]
+    }
+    
+    return jsonify(docs)
 
 def main():
-    """Main function."""
-    logger.info("Starting main function")
+    parser = argparse.ArgumentParser(description="Duck Robot API Server")
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind to")
+    parser.add_argument("--port", type=int, default=5000, help="Port to bind to")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     
-    # Create and run the demo
-    demo = RobotDemo(args.robot_usd, args.model_file)
-    demo.run_demo(duration=args.duration)
+    args = parser.parse_args()
     
-    logger.info("Main function completed")
-    simulation_app.close()
-
+    logger.info(f"Starting Duck Robot API Server on {args.host}:{args.port}")
+    app.run(host=args.host, port=args.port, debug=args.debug)
 
 if __name__ == "__main__":
     main()

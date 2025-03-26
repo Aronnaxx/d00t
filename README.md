@@ -1,143 +1,281 @@
-# Isaac Lab Robot Integration
+# Open Duck VLM Integration
 
-This project demonstrates how to integrate a custom robot into NVIDIA Isaac Lab, complete with external control, camera streaming, ONNX model inference, and telemetry logging.
+This project provides an API and client libraries to allow Vision Language Models (VLMs) to control the Open Duck robot in MuJoCo simulation. The system enables external AI systems to view the robot's environment through camera frames and send movement commands.
 
-## Project Structure
+## System Architecture
 
+```mermaid
+graph TD
+    subgraph "MuJoCo Simulation"
+        M[MuJoCo Thread] -- renders --> CF[Camera Frames]
+        ONNX[ONNX Model] -- controls --> Robot[Duck Robot]
+        M -- steps simulation --> Robot
+    end
+    
+    subgraph "API Server"
+        Flask[Flask API Server] -- starts/manages --> M
+        Flask -- gets frames from --> CF
+        Flask -- sends commands to --> Robot
+        Flask -- exposes endpoints --> API[REST API Endpoints]
+    end
+    
+    subgraph "Client Libraries"
+        PythonClient[Python Client]
+        CLITool[Command Line Tool]
+        VLMIntegration[VLM Integration]
+    end
+    
+    API -- consumed by --> PythonClient
+    PythonClient -- used by --> CLITool
+    PythonClient -- used by --> VLMIntegration
+    
+    subgraph "External VLM"
+        VLMService[VLM API Service]
+    end
+    
+    VLMIntegration -- sends frames to --> VLMService
+    VLMService -- returns commands --> VLMIntegration
 ```
-project/
-├── assets/               # Contains robot USD files
-├── logs/                 # Directory for telemetry and video logs
-├── main.py               # Main entry point for the simulation
-├── control/              # Robot control module
-│   └── controller.py     # Differential drive controller
-├── perception/           # Vision and ONNX model module
-│   ├── camera.py         # Camera sensor setup and access
-│   └── model_inference.py # ONNX model loading and inference
-├── robot_logging/        # Data logging module
-│   └── telemetry.py      # Utilities for logging robot data
-├── simulation/           # Simulation environment module
-│   ├── environment.py    # Isaac Sim initialization and stage loading
-│   └── robot_loader.py   # Robot loading and placement
-├── create_test_robot.py  # Utility to create a test robot USD
-├── run.sh                # Convenience script to run the simulation
-├── setup.sh              # Setup script to initialize the project
-└── pyproject.toml        # Project configuration for UV
+
+## Control Flow
+
+```mermaid
+sequenceDiagram
+    participant VLM as VLM/LLM System
+    participant Client as Duck Client
+    participant API as API Server
+    participant MuJoCo as MuJoCo Simulation
+    
+    VLM->>Client: Initialize simulation
+    Client->>API: POST /initialize
+    API->>MuJoCo: Start simulation thread
+    API-->>Client: Success response
+    Client-->>VLM: Simulation ready
+    
+    loop Control Loop
+        VLM->>Client: Request camera frame
+        Client->>API: GET /frame
+        API->>MuJoCo: Get current frame
+        MuJoCo-->>API: Return frame data
+        API-->>Client: Frame (base64 encoded)
+        Client-->>VLM: Processed frame
+        
+        Note over VLM: Process image and decide action
+        
+        VLM->>Client: Send command
+        Client->>API: POST /command
+        API->>MuJoCo: Update command queue
+        MuJoCo->>MuJoCo: Execute command
+        API-->>Client: Command received
+        Client-->>VLM: Command executed
+    end
+    
+    VLM->>Client: Shutdown simulation
+    Client->>API: POST /shutdown
+    API->>MuJoCo: Stop simulation thread
+    API-->>Client: Success response
+    Client-->>VLM: Simulation stopped
 ```
 
-## Prerequisites
+## Natural Language Command Processing
 
-1. NVIDIA Isaac Sim: Will be installed via UV package manager
-2. Python 3.10 (required by Isaac Lab)
-3. [UV Package Manager](https://github.com/astral-sh/uv): The modern Python package manager
+```mermaid
+graph LR
+    NLCommand[Natural Language Command] --> Parser[Command Parser]
+    
+    Parser --> Forward[Move Forward]
+    Parser --> Backward[Move Backward]
+    Parser --> TurnLeft[Turn Left]
+    Parser --> TurnRight[Turn Right]
+    Parser --> LookUp[Look Up]
+    Parser --> LookDown[Look Down]
+    
+    Forward --> CommandVector["[0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]"]
+    Backward --> CommandVector2["[-0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]"]
+    TurnLeft --> CommandVector3["[0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0]"]
+    TurnRight --> CommandVector4["[0.0, 0.0, -0.5, 0.0, 0.0, 0.0, 0.0]"]
+    LookUp --> CommandVector5["[0.0, 0.0, 0.0, 0.5, -0.5, 0.0, 0.0]"]
+    LookDown --> CommandVector6["[0.0, 0.0, 0.0, -0.3, 0.5, 0.0, 0.0]"]
+    
+    CommandVector --> RobotControl[Robot Control System]
+    CommandVector2 --> RobotControl
+    CommandVector3 --> RobotControl
+    CommandVector4 --> RobotControl
+    CommandVector5 --> RobotControl
+    CommandVector6 --> RobotControl
+```
 
-## Getting Started
+## Files Overview
 
-### 1. Install UV Package Manager
+- `main.py`: Flask API server that interfaces with MuJoCo and exposes control endpoints
+- `client.py`: Python client library for interacting with the API
+- `vlm_integration.py`: Example implementation showing how a VLM can control the duck robot
 
-If you don't have UV already installed, you can install it with:
+## Installation
+
+### Prerequisites
+
+- Python 3.8+
+- MuJoCo
+- Open Duck Playground repository
+
+### Setup
+
+1. Install dependencies:
 
 ```bash
-curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/astral-sh/uv/main/install.sh | sh
+pip install -e .
+# or individually
+pip install flask flask-cors pillow requests opencv-python numpy mujoco etils
 ```
 
-### 2. Setup the Project
+2. Ensure you have trained an ONNX model for the Open Duck robot (or use a pre-trained one)
 
-Run the setup script to initialize the project, install dependencies, and create a test robot:
+## Usage
+
+### Starting the API Server
 
 ```bash
-./setup.sh
+python main.py --host 0.0.0.0 --port 5000
 ```
 
-This will:
-- Install all required dependencies including Isaac Lab and Isaac Sim
-- Create necessary directories
-- Generate a test robot USD file
+Additional options:
+- `--debug`: Enable debug mode
 
-### 3. Running the Simulation
+### Using the Client Library
 
-Once setup is complete, you can run the simulation with:
+The `client.py` module provides a Python client for interacting with the duck robot:
+
+```python
+from client import DuckRobotClient
+
+# Initialize client
+client = DuckRobotClient(api_url="http://localhost:5000")
+
+# Initialize the MuJoCo simulation
+client.initialize(onnx_model_path="path/to/duck_policy.onnx")
+
+# Send a command
+# Format: [vx, vy, omega, neck_pitch, head_pitch, head_yaw, head_roll]
+client.send_direct_command([0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])  # Move forward
+
+# Get a camera frame
+frame_data = client.get_frame()
+with open("frame.png", "wb") as f:
+    f.write(base64.b64decode(frame_data["image"]))
+
+# Send a natural language command
+client.send_nl_command("move forward and turn left")
+
+# Shutdown when done
+client.shutdown()
+```
+
+### Command-line Client
+
+You can also use the client from the command line:
 
 ```bash
-# Using the convenience script
-./run.sh
+# Get status
+python client.py status
 
-# Or directly with UV
-uv run main
+# Initialize simulation
+python client.py initialize --onnx-model-path path/to/duck_policy.onnx
+
+# Send direct command (move forward)
+python client.py direct --vx 0.1
+
+# Send natural language command
+python client.py nl "move forward and look left"
+
+# Get a frame and save it
+python client.py frame --output frame.png
+
+# Shutdown
+python client.py shutdown
 ```
 
-Optional command-line arguments:
-- `--headless`: Run in headless mode (no GUI)
-- `--robot PATH`: Specify a custom robot USD file path
-- `--model PATH`: Specify a custom ONNX model file path
-- `--log-dir DIR`: Specify a directory for logs
+### VLM Integration
 
-Example with custom settings:
+The `vlm_integration.py` file demonstrates how to integrate a VLM with the Duck Robot:
+
 ```bash
-uv run main -- --robot assets/my_custom_robot.usd --model models/nav_policy.onnx
+# Run in interactive mode (natural language commands)
+python vlm_integration.py --onnx-model path/to/duck_policy.onnx --interactive
+
+# Use an external VLM API
+python vlm_integration.py --onnx-model path/to/duck_policy.onnx --vlm-api https://your-vlm-api.com --vlm-key your_api_key
 ```
 
-### 4. Running Individual Components
+## API Endpoints
 
-You can run individual components of the project with UV for testing:
+The main API server provides these endpoints:
 
-```bash
-# Create a test robot USD
-uv run create-robot
+- `GET /status`: Get the status of the MuJoCo simulation
+- `POST /initialize`: Initialize the MuJoCo simulation
+- `POST /shutdown`: Shutdown the MuJoCo simulation
+- `POST /command`: Send a command to the Duck Robot
+- `GET /frame`: Get the current camera frame
+- `GET /help`: Get API documentation
 
-# Test the environment
-uv run run-env
+## Command Format
 
-# Test the camera
-uv run run-camera
+Direct commands to the duck robot use a 7-element array:
 
-# Test the model inference
-uv run run-model
-
-# Test the controller
-uv run run-controller
-
-# Test the telemetry logging
-uv run run-telemetry
+```
+[vx, vy, omega, neck_pitch, head_pitch, head_yaw, head_roll]
 ```
 
-## Components
+Where:
+- `vx`: Forward velocity (-0.15 to 0.2)
+- `vy`: Lateral velocity (-0.2 to 0.2)
+- `omega`: Angular velocity/turning (-1.0 to 1.0)
+- `neck_pitch`: Neck pitch angle (-0.34 to 1.1)
+- `head_pitch`: Head pitch angle (-0.78 to 0.78)
+- `head_yaw`: Head yaw angle (-1.5 to 1.5)
+- `head_roll`: Head roll angle (-0.5 to 0.5)
 
-### Simulation Environment
-The `simulation` module handles launching Isaac Sim, loading the warehouse environment, and inserting the robot.
+## VLM Integration
 
-### Robot Control
-The `control` module provides access to the robot's articulation and implements differential drive control.
+To integrate your own VLM:
 
-### Perception
-The `perception` module sets up the camera sensor and handles ONNX model inference:
-- The camera is attached to the robot and provides RGB frames
-- The ONNX model takes these frames and outputs velocity commands
+1. Implement an API endpoint that accepts:
+   - An image (base64 encoded)
+   - A text prompt
 
-### Telemetry Logging
-The `robot_logging` module records the robot's state and camera frames for later analysis:
-- Robot telemetry is saved as a JSON file
-- Camera frames are recorded as a video
+2. Update the `process_vlm_response_to_command` method in `VLMDuckController` to parse your VLM's response format
 
-## Customization
+3. Use the `vlm_integration.py` script with your VLM API endpoint
 
-### Using Your Own Robot
-1. Prepare your robot as a USD file (convert from URDF if needed using Isaac Lab tools)
-2. Update the joint names in `main.py` to match your robot's configuration
-3. Run with `--robot` pointing to your USD file
+## Debugging
 
-### Using Your Own ONNX Model
-1. Prepare an ONNX model that takes camera images and outputs velocity commands
-2. You may need to update `model_inference.py` to match your model's input/output formats
-3. Run with `--model` pointing to your ONNX file
+- All components include detailed logging
+- The VLM integration saves frames to disk for debugging
+- Use the `--debug` flag for more verbose output
 
-## Troubleshooting
+## Example VLM Workflow
 
-- **UV Installation Issues**: If you have problems with UV, check the [UV documentation](https://github.com/astral-sh/uv)
-- **Nucleus Path Issues**: If you encounter errors loading the warehouse stage, check if the Nucleus path is correct for your installation
-- **Joint Names**: Ensure the joint names in the wheel parameters match your robot's joint names
-- **Camera Issues**: If camera frames are empty, try stepping the simulation a few more frames before using them
+```mermaid
+flowchart TD
+    Start([Start]) --> InitServer[Start API Server]
+    InitServer --> InitClient[Initialize Client]
+    InitClient --> InitSim[Initialize Simulation with ONNX model]
+    
+    InitSim --> Loop{Control Loop}
+    
+    Loop --> GetFrame[Get Camera Frame]
+    GetFrame --> ProcessFrame[Send Frame to VLM]
+    ProcessFrame --> ParseResponse[Parse VLM Response]
+    ParseResponse --> SendCommand[Send Command to Robot]
+    SendCommand --> Loop
+    
+    Loop -- End loop --> Shutdown[Shutdown Simulation]
+    Shutdown --> End([End])
+```
 
-## License
+## Notes
 
-This project is governed by the terms of the BSD-3 License, in alignment with the Isaac Lab framework license.
+- The MuJoCo simulation runs in a separate thread for improved performance
+- Command queueing ensures smooth motion even with delayed VLM responses
+- Natural language commands are mapped to direct commands using simple keyword matching
+- Fixed initialization issue by setting default ONNX model path to "model.onnx"
