@@ -45,6 +45,10 @@ dev = [
 requires = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+packages = ["open_duck_mini_v2", "submodules"]
+py-modules = ["start_robot", "vlm_integration", "voice_integration", "ollama", "client", "config", "main"]
+
 [tool.black]
 line-length = 88
 target-version = ["py38"]
