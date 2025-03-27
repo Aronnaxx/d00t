@@ -1,5 +1,8 @@
 # D00t - Duck Robot VLM Integration
 
+![78ac7699-3bdc-4536-bfeb-1fa6e34284ec](https://github.com/user-attachments/assets/27ec872e-e569-4f89-ac04-bda8a98c6dbd)
+
+
 This project integrates Vision Language Models (VLMs) with the Open Duck Robot, enabling natural language control of the duck robot in the MuJoCo simulation environment.
 
 ## Project Overview
