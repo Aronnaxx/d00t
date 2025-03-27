@@ -1,4 +1,4 @@
-# Open Duck VLM Integration
+# D00t - Duck Robot VLM Integration
 
 This project integrates Vision Language Models (VLMs) with the Open Duck Robot, enabling natural language control of the duck robot in the MuJoCo simulation environment.
 
@@ -171,8 +171,8 @@ flowchart TD
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/open_duck_vlm.git
-   cd open_duck_vlm
+   git clone https://github.com/yourusername/d00t.git
+   cd d00t
    ```
 
 2. Install dependencies using UV:
@@ -184,10 +184,10 @@ flowchart TD
 3. Set up a VLM:
    - Option 1: **Local Ollama VLM** (recommended for robot deployment)
      ```bash
-     # Install and set up Ollama automatically
-     uv run ollama-manager install
+     # Install Ollama from https://ollama.com
      
-     # Or manually from https://ollama.com
+     # Pull a vision-enabled model:
+     ollama pull llava
      ```
      
    - Option 2: External VLM API (cloud-based solution)
@@ -197,14 +197,14 @@ flowchart TD
 
 ### Quick Start
 
-1. Install Ollama from [ollama.ai](https://ollama.ai)
+1. Install Ollama from [ollama.com](https://ollama.com)
 2. Pull the required vision model:
    ```bash
    ollama pull llava
    ```
 3. Run the system using the convenient start_robot.py script:
    ```bash
-   python start_robot.py --autonomous --voice --tts
+   uv run start_robot.py --autonomous --voice --tts
    ```
    
    This script will:
@@ -218,7 +218,7 @@ flowchart TD
 
 ### Prerequisites
 
-1. Install Ollama from [ollama.ai](https://ollama.ai)
+1. Install Ollama from [ollama.com](https://ollama.com)
 2. Make sure you have the required models:
    ```bash
    ollama pull llava  # For the basic vision model
@@ -231,13 +231,13 @@ flowchart TD
 Start the Duck Robot with Ollama as the VLM provider:
 
 ```bash
-python -m vlm_integration --vlm-type ollama --ollama-model llava
+uv run vlm_integration.py --vlm-type ollama --ollama-model llava
 ```
 
 With a custom system prompt:
 
 ```bash
-python -m vlm_integration --vlm-type ollama --ollama-model llava --system-prompt "You are a helpful Duck Robot assistant that can see through a camera and respond to commands. You can move forward, backward, turn left or right, and look around."
+uv run vlm_integration.py --vlm-type ollama --ollama-model llava --system-prompt "You are a helpful Duck Robot assistant that can see through a camera and respond to commands. You can move forward, backward, turn left or right, and look around."
 ```
 
 ### Voice Commands
@@ -245,7 +245,7 @@ python -m vlm_integration --vlm-type ollama --ollama-model llava --system-prompt
 To enable voice commands:
 
 ```bash
-python -m vlm_integration --vlm-type ollama --ollama-model llava --voice --tts
+uv run vlm_integration.py --vlm-type ollama --ollama-model llava --voice --tts
 ```
 
 ### Autonomous Mode
@@ -253,7 +253,7 @@ python -m vlm_integration --vlm-type ollama --ollama-model llava --voice --tts
 To start in autonomous exploration mode:
 
 ```bash
-python -m vlm_integration --vlm-type ollama --ollama-model llava --autonomous
+uv run vlm_integration.py --vlm-type ollama --ollama-model llava --autonomous
 ```
 
 ### Combined Features
@@ -261,13 +261,13 @@ python -m vlm_integration --vlm-type ollama --ollama-model llava --autonomous
 Full featured setup with all capabilities:
 
 ```bash
-python -m vlm_integration --vlm-type ollama --ollama-model llava --voice --tts --autonomous --system-prompt "You are a helpful Duck Robot assistant that explores the environment autonomously and can respond to voice commands. You can see through your camera and describe what you see."
+uv run vlm_integration.py --vlm-type ollama --ollama-model llava --voice --tts --autonomous --system-prompt "You are a helpful Duck Robot assistant that explores the environment autonomously and can respond to voice commands. You can see through your camera and describe what you see."
 ```
 
 ### Running with External VLM API
 
 ```bash
-uv run external-run --vlm-api=https://your-vlm-api.com/vision --vlm-key=your-api-key
+uv run vlm_integration.py --vlm-type external --vlm-api=https://your-vlm-api.com/vision --vlm-key=your-api-key
 ```
 
 ### Interactive Mode
@@ -275,10 +275,10 @@ uv run external-run --vlm-api=https://your-vlm-api.com/vision --vlm-key=your-api
 Run in interactive mode to send direct commands:
 
 ```bash
-uv run interactive
+uv run vlm_integration.py --interactive
 
 # With voice commands
-uv run interactive --voice
+uv run vlm_integration.py --interactive --voice
 ```
 
 ## VLM Options
@@ -332,16 +332,16 @@ The Duck Robot API provides the following endpoints:
 ## Project Structure
 
 ```
-open_duck_vlm/
-├── playground/                # Duck robot simulation code
-│   └── open_duck_mini_v2/     # Duck robot model
-│       ├── mujoco_infer.py    # MuJoCo inference
-│       └── common/            # Common utilities
+d00t/
+├── open_duck_mini_v2/         # Duck robot model
+├── submodules/                # Submodules
+│   └── open_duck_playground/  # Duck robot simulation code
 ├── main.py                    # API server
 ├── client.py                  # Client for the API server
 ├── vlm_integration.py         # VLM integration
 ├── ollama.py                  # Ollama manager utility
 ├── voice_integration.py       # Voice commands and TTS
+├── start_robot.py             # Convenient startup script
 └── README.md                  # This file
 ```
 
@@ -389,22 +389,12 @@ The system uses a central `config.py` file that defines default settings. You ca
 
 1. Create a directory for your settings:
    ```bash
-   mkdir -p ~/.duck_robot
+   mkdir -p ~/.d00t
    ```
 
 2. Create a configuration file based on the example:
    ```bash
-   cp user_config_example.py ~/.duck_robot/config.py
-   ```
-
-3. Edit the file to specify your preferred models and settings:
-   ```python
-   # Use Gemma 3 instead of llava
-   ollama_model = "gemma3:4b"
-   
-   # Enable voice and TTS by default
-   use_voice = True
-   use_tts = True
+   cp user_config_example.py ~/.d00t/config.py
    ```
 
 ### 2. Using Environment Variables
@@ -413,14 +403,14 @@ You can also set configuration using environment variables:
 
 ```bash
 # Set Gemma 3 as the default model
-export DUCK_OLLAMA_MODEL=gemma3:4b
+export D00T_OLLAMA_MODEL=gemma3:4b
 
 # Enable voice commands and TTS
-export DUCK_USE_VOICE=true
-export DUCK_USE_TTS=true
+export D00T_USE_VOICE=true
+export D00T_USE_TTS=true
 
 # Run with these settings
-python start_robot.py
+uv run start_robot.py
 ```
 
 ### 3. Using Command Line Arguments
@@ -428,7 +418,7 @@ python start_robot.py
 Command line arguments override both environment variables and the configuration file:
 
 ```bash
-python start_robot.py --ollama-model gemma3:4b --voice --tts
+uv run start_robot.py --ollama-model gemma3:4b --voice --tts
 ```
 
 ### Available Model Options
