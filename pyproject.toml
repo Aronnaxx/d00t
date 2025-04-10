@@ -24,6 +24,3 @@ dependencies = [
 
 [project.scripts]
 duck-vla = "duck_vla.run_duck:main"
-
-[tool.uv]
-editable-dependencies = true
