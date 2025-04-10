@@ -33,6 +33,9 @@ class DecisionLoop:
         local_model: bool = True,
         vision_model: Optional[str] = None,
         onnx_model_path: Optional[str] = None,
+        llm_provider: str = "ollama",
+        llm_model: Optional[str] = None,
+        system_prompt: Optional[str] = None,
     ):
         """
         Initialize the decision loop.
@@ -42,8 +45,12 @@ class DecisionLoop:
             audio_enabled: Whether to enable audio input/output
             camera_enabled: Whether to enable camera input
             cli_enabled: Whether to enable CLI for direct command input
+            local_model: Whether to use a local model (Ollama) or remote API
             vision_model: Vision model name to use (default from env or 'moondream')
             onnx_model_path: Path to ONNX model for simulation (default from env or None)
+            llm_provider: LLM provider to use ('ollama', 'openai', 'anthropic')
+            llm_model: Specific model to use with the LLM provider
+            system_prompt: Custom system prompt to use for the LLM
         """
         self.simulate = simulate
         self.audio_enabled = audio_enabled
@@ -52,8 +59,13 @@ class DecisionLoop:
         
         # if local_model is True, we will use the local model
         # if local_model is False, we will use the external model
-
         self.local_model = local_model
+        
+        # LLM provider settings
+        self.llm_provider = llm_provider
+        self.llm_model = llm_model
+        self.system_prompt = system_prompt
+        
         # Get vision model from environment or parameter
         self.vision_model = vision_model or os.environ.get("DUCK_VISION_MODEL", "moondream")
         
@@ -77,9 +89,14 @@ class DecisionLoop:
         self.cli = None
         self.motion = None
         self.emotes = None
+        self.central_model = None
         
-        # Ensure vision system is always initialized
-        self._init_vision_components(force_initialize=True)
+        # Initialize LLM and AI components
+        self._init_ai_components()
+        
+        # Initialize vision only if camera is enabled
+        if camera_enabled:
+            self._init_vision_components()
 
         # Initialize audio components if audio is enabled    
         if audio_enabled:
@@ -94,35 +111,60 @@ class DecisionLoop:
             
         logger.info("Decision loop initialization complete")
     
-    def _init_vision_components(self, force_initialize=False):
+    def _init_ai_components(self):
+        """Initialize AI components including LLM provider"""
+        try:
+            from duck_vla.core_ai.central_model import CentralModel
+            
+            logger.debug(f"Initializing central AI model with provider: {self.llm_provider}")
+            
+            # Initialize the central model with the specified provider and settings
+            self.central_model = CentralModel(
+                provider_type=self.llm_provider,
+                model_name=self.llm_model,
+                system_prompt=self.system_prompt,
+                debug_mode=logger.level == logging.DEBUG
+            )
+            
+            logger.info(f"Central AI model initialized with {self.llm_provider} provider")
+            
+            # Also initialize the intent parser
+            from duck_vla.core_ai.intent_parser import IntentParser
+            self.intent_parser = IntentParser()
+            logger.info("Intent parser initialized")
+            
+        except ImportError as e:
+            logger.error(f"Failed to import AI modules: {e}")
+            logger.debug(traceback.format_exc())
+            self.central_model = None
+        except Exception as e:
+            logger.error(f"Unexpected error initializing AI components: {e}")
+            logger.debug(traceback.format_exc())
+            self.central_model = None
+    
+    def _init_vision_components(self):
         """Initialize vision and camera components with graceful error handling."""
         try:
             from duck_vla.camera.arducam_capture import ArduCamCapture
-            # TODO -- import either the ollama or external api model interface from our central_model
-
-            logger.debug("Initializing camera and vision modules")
+            
+            logger.debug("Initializing camera module")
 
             # Try to initialize camera but continue if hardware not available
-            if self.camera_enabled and not force_initialize:
-                try:
-                    self.camera = ArduCamCapture()
-                    logger.info("Camera initialized successfully")
-                except Exception as e:
-                    logger.warning(f"Failed to initialize camera hardware: {e}")
-                    logger.info("Continuing without camera hardware, but vision processing will still be available")
-                    self.camera = None
-
-            # Initialize vision model regardless of camera hardware status
             try:
-                self.vision = MoondreamVision(
-                    backend="ollama",
-                    model_id=self.vision_model
-                )
-                logger.info(f"Vision system initialized with model: {self.vision_model}")
+                self.camera = ArduCamCapture()
+                logger.info("Camera initialized successfully")
             except Exception as e:
-                logger.error(f"Failed to initialize vision system: {e}")
-                logger.debug(traceback.format_exc())
-                self.vision = None
+                logger.warning(f"Failed to initialize camera hardware: {e}")
+                logger.info("Continuing without camera hardware, but vision processing will still be available")
+                self.camera = None
+
+            # Vision processing will use our central model if available
+            if self.central_model is not None:
+                logger.info("Vision processing will use the central AI model")
+                # In a real implementation, we'd configure the central model for vision tasks
+                # self.vision = self.central_model
+            else:
+                logger.warning("Central AI model not available, vision processing will be limited")
 
         except ImportError as e:
             logger.warning(f"Failed to import vision modules: {e}")
@@ -140,7 +182,6 @@ class DecisionLoop:
             # First try importing the modules
             try:
                 from duck_vla.sounds.stt import SpeechToText
-                from duck_vla.brain.intent_parser import IntentParser
                 from duck_vla.sounds.audio import AudioSystem
                 
                 logger.debug("Successfully imported audio modules")
@@ -148,13 +189,7 @@ class DecisionLoop:
                 logger.warning(f"Failed to import audio modules: {e}")
                 return
             
-            # Then try initializing each component separately
-            try:
-                self.intent_parser = IntentParser()
-                logger.info("Intent parser initialized successfully")
-            except Exception as e:
-                logger.warning(f"Failed to initialize intent parser: {e}")
-                self.intent_parser = None
+            # Intent parser is now initialized in _init_ai_components
             
             try:
                 self.stt = SpeechToText()
@@ -176,7 +211,6 @@ class DecisionLoop:
             logger.error(f"Unexpected error initializing audio components: {e}")
             logger.debug(traceback.format_exc())
             self.stt = None
-            self.intent_parser = None
             self.audio_system = None
     
     def _init_cli_controller(self):
@@ -198,42 +232,38 @@ class DecisionLoop:
     def _init_action_system(self):
         """Initialize action system components with error handling."""
         try:
-            if self.simulate:
-                logger.info("Using simulation-based movement")
-                # Import simulation-specific modules here
-                try:
-                    from duck_vla.action.motion_controller import SimulatedMotionController
-                    
-                    # Create with ONNX model path if specified
-                    self.motion = SimulatedMotionController(onnx_model_path=self.onnx_model_path)
-                    logger.info("Simulated motion controller initialized successfully")
-                except Exception as e:
-                    logger.error(f"Failed to initialize simulated motion controller: {e}")
-                    logger.debug(traceback.format_exc())
-                    self.motion = None
-            else:
-                logger.info("Using real hardware movement")
-                try:
-                    from duck_vla.action.motion_controller import MotionController
-                    self.motion = MotionController()
-                    logger.info("Hardware motion controller initialized successfully")
-                except Exception as e:
-                    logger.error(f"Failed to initialize hardware motion controller: {e}")
-                    logger.debug(traceback.format_exc())
-                    self.motion = None
+            from duck_vla.actions.movement import Movement
             
+            logger.info(f"Initializing {'simulated' if self.simulate else 'real'} movement")
+            
+            # Create the movement controller with the appropriate mode
+            self.motion = Movement(
+                simulated=self.simulate,
+                debug_logging=logger.level == logging.DEBUG
+            )
+            logger.info(f"{'Simulated' if self.simulate else 'Real'} movement controller initialized")
+            
+            # Initialize emote system
             try:
-                from duck_vla.action.emotes import EmoteController
+                from duck_vla.actions.emotes import EmoteController
                 self.emotes = EmoteController(audio_enabled=self.audio_enabled)
                 logger.info("Emote controller initialized successfully")
+            except ImportError as e:
+                logger.warning(f"Failed to import emote controller: {e}")
+                self.emotes = None
             except Exception as e:
                 logger.warning(f"Failed to initialize emote controller: {e}")
                 self.emotes = None
             
         except ImportError as e:
             logger.error(f"Failed to import action modules: {e}")
+            logger.debug(traceback.format_exc())
             self.motion = None
             self.emotes = None
+        except Exception as e:
+            logger.error(f"Failed to initialize movement controller: {e}")
+            logger.debug(traceback.format_exc())
+            self.motion = None
             
         # Verify we have at least some action capability
         if self.motion is None:
@@ -250,76 +280,56 @@ class DecisionLoop:
             self.cli.start()
         
         try:
+            # Main loop
             while self.running:
                 self._process_cycle()
-                time.sleep(0.1)  # Short sleep to prevent CPU overuse
+                time.sleep(0.1)  # Small delay to prevent CPU spinning
                 
         except KeyboardInterrupt:
-            logger.info("Decision loop interrupted")
-            self.running = False
+            logger.info("Received keyboard interrupt, stopping")
         except Exception as e:
-            logger.exception(f"Unexpected error in decision loop: {e}")
-            self.running = False
+            logger.error(f"Unexpected error in main loop: {e}")
+            logger.debug(traceback.format_exc())
         finally:
             self._cleanup()
+            
+        logger.info("Decision loop stopped")
     
     def _process_cycle(self) -> None:
         """Process a single cycle of the decision loop."""
-        # Update state with timing info for debugging
-        cycle_start_time = time.time()
-        self.current_state["cycle_timestamp"] = cycle_start_time
+        # Get command from CLI or speech input
+        command = self._get_command()
         
-        # 1. Check for CLI input if enabled
-        command = None
-        if self.cli_enabled and self.cli:
-            cli_command = self.cli.get_command(timeout=0.01)
-            if cli_command:
-                logger.info(f"Received CLI command: {cli_command}")
-                command = cli_command
+        # Get camera frame and perform vision processing if available
+        vision_result = self._get_vision()
         
-        # 2. Check for audio input if enabled and no CLI command
-        if command is None and self.audio_enabled and self.stt:
-            logger.debug("Listening for commands")
-            audio_input = self.stt.listen()
-            if audio_input:
-                logger.info(f"Heard: {audio_input}")
-                # Parse the intent from speech
-                if self.intent_parser:
-                    intent_data = self.intent_parser.parse(audio_input)
-                    if intent_data:
-                        logger.debug(f"Parsed intent: {intent_data}")
-                        command = intent_data
-        
-        # 3. Capture image if camera is enabled and hardware available
-        frame = None
-        vision_result = None
-        if self.camera_enabled and self.camera:
-            # logger.debug("Capturing image frame")
-            try:
-                frame = self.camera.capture()
-                # Pass to vision system for processing if available
-                if frame is not None and self.vision:
-                    logger.debug("Processing image with vision model")
-                    vision_result = self.vision.process_image(frame)
-                    logger.debug(f"Vision result: {vision_result}")
-            except Exception as e:
-                logger.error(f"Error during camera capture or vision processing: {e}")
-        elif self.camera_enabled and self.vision:
-            # We have vision processing but no camera hardware
-            logger.debug("Vision system available but no camera feed")
-        
-        # 4. Decide on action based on commands and vision
+        # Make decision based on command and vision input
         action = self._decide_action(command, vision_result)
         
-        # 5. Execute action if available
+        # Execute action if any
         if action:
-            logger.debug(f"Executing action: {action}")
             self._execute_action(action)
-        
-        # Log cycle duration for performance monitoring
-        cycle_duration = time.time() - cycle_start_time
-        # logger.debug(f"Cycle completed in {cycle_duration:.3f} seconds")
-        
+            
+        # Update current state
+        self.current_state = {
+            "status": "running",
+            "last_command": command,
+            "last_vision": vision_result,
+            "last_action": action
+        }
+    
+    def _get_command(self) -> Optional[Dict[str, Any]]:
+        """Get command from available input sources."""
+        # Implementation would depend on available input modules
+        # For now, just return None
+        return None
+    
+    def _get_vision(self) -> Optional[Dict[str, Any]]:
+        """Get and process camera input if available."""
+        # Implementation would depend on camera and vision modules
+        # For now, just return None
+        return None
+    
     def _decide_action(
         self, 
         command: Optional[Dict[str, Any]], 
@@ -329,139 +339,136 @@ class DecisionLoop:
         Decide what action to take based on command and vision input.
         
         Args:
-            command: Command from CLI or speech input
-            vision_result: Result from vision processing
+            command: Parsed command input, if any
+            vision_result: Vision processing result, if any
             
         Returns:
-            Action to execute or None
+            Action to execute, or None if no action
         """
-        # If we have a direct command, prioritize it
-        if command:
-            return command
-        
-        # Otherwise, use vision result to determine action
-        if vision_result and self.vision:
-            # Analyze vision result and return appropriate action
-            # This is where more sophisticated decision-making would happen
-            
-            # Simple example: if we see a person, wave at them
-            if "person" in str(vision_result).lower():
-                return {
-                    "action_type": "emote",
-                    "params": {"emotion": "wave"}
-                }
+        # If we have a central model, use it to decide the action
+        if self.central_model and command:
+            try:
+                # Process the command using the central model
+                action_code = self.central_model.process_command(
+                    command=command.get("text", ""),
+                    context={"vision": vision_result} if vision_result else {}
+                )
                 
-            # More decision logic would go here
+                # Parse the resulting action code
+                # In a real implementation, this would execute the Python code
+                # or transform it into action commands
+                
+                return {"type": "ai_generated", "code": action_code}
+                
+            except Exception as e:
+                logger.error(f"Error processing command with central model: {e}")
+                logger.debug(traceback.format_exc())
+                return None
         
-        # No action decided
+        # If we have a command but no central model, use rule-based approach
+        elif command:
+            # Simple rule-based action selection
+            # In a real implementation, this would use the intent parser
+            return {"type": "rule_based", "command": command}
+            
         return None
     
     def _execute_action(self, action):
         """
-        Execute a given action using the appropriate controller.
+        Execute the given action.
         
         Args:
-            action: Action dictionary with type and parameters
+            action: Action dictionary to execute
         """
         if not action:
-            logger.warning("Received empty action, ignoring")
-            return False
-        
+            return
+            
         try:
-            action_type = action.get("action_type", "")
-            params = action.get("params", {})
+            action_type = action.get("type")
             
-            logger.debug(f"Executing action: {action}")
-            
-            if action_type == "move":
-                # Movement action
-                direction = params.get("direction", "")
-                speed = params.get("speed", 0.5)
-                duration = params.get("duration", None)
+            if action_type == "ai_generated" and "code" in action:
+                # Execute AI-generated Python code
+                # SECURITY NOTE: In a production system, you would want to
+                # carefully validate and sandbox this code execution
+                logger.debug(f"Executing AI-generated code: {action['code']}")
                 
-                if not direction:
-                    logger.warning("Missing direction parameter for move action")
-                    return False
+                # In a real implementation, we'd execute the code safely
+                # For now, just log it
+                logger.info(f"Would execute AI code: {action['code'][:100]}...")
                 
-                logger.info(f"Moving {direction} at speed {speed}")
-                return self.motion.move(direction, speed, duration)
+            elif action_type == "rule_based" and "command" in action:
+                # Execute rule-based command
+                command = action["command"]
+                intent_type = command.get("intent_type")
                 
-            elif action_type == "turn":
-                # Turn action
-                direction = params.get("direction", "left")
-                rate = params.get("rate", 0.5) 
-                angle = params.get("angle", None)
-                
-                logger.info(f"Turning {direction} at rate {rate}" + 
-                           (f" by {angle} degrees" if angle else " continuously"))
-                return self.motion.turn(direction, rate, angle)
-                
-            elif action_type == "look_at":
-                # Head movement action
-                target = params.get("target", None)
-                yaw = params.get("yaw", 0.0)
-                pitch = params.get("pitch", 0.0)
-                roll = params.get("roll", 0.0)
-                
-                if target:
-                    logger.info(f"Looking at {target}")
-                else:
-                    logger.info(f"Setting head position: yaw={yaw}, pitch={pitch}, roll={roll}")
+                if not self.motion:
+                    logger.warning("Motion controller not available, can't execute movement command")
+                    return
                     
-                return self.motion.look_at(target, yaw, pitch, roll)
+                # Handle different intent types
+                if intent_type.startswith("move_"):
+                    direction = intent_type.replace("move_", "")
+                    if direction == "forward":
+                        self.motion.move_forward()
+                    elif direction == "backward":
+                        self.motion.move_backward()
+                        
+                elif intent_type.startswith("turn_"):
+                    direction = intent_type.replace("turn_", "")
+                    if direction == "left":
+                        self.motion.turn_left()
+                    elif direction == "right":
+                        self.motion.turn_right()
+                        
+                elif intent_type == "stop":
+                    self.motion.stop()
+                    
+                elif intent_type.startswith("look_"):
+                    target = intent_type.replace("look_", "")
+                    if target == "up":
+                        self.motion.look_up()
+                    elif target == "down":
+                        self.motion.look_down()
+                    elif target == "left":
+                        self.motion.look_left()
+                    elif target == "right":
+                        self.motion.look_right()
                 
-            elif action_type == "emote":
-                # Emote action
-                emotion = params.get("emotion", "neutral")
-                intensity = params.get("intensity", 0.5)
-                
-                logger.info(f"Expressing emotion: {emotion} with intensity {intensity}")
-                return self.emotes.express(emotion, intensity)
-                
-            elif action_type == "stop":
-                # Stop all movement
-                logger.info("Stopping all movement")
-                return self.motion.stop()
+                logger.debug(f"Executed rule-based command: {intent_type}")
                 
             else:
-                logger.warning(f"Unknown or unsupported action type: {action_type}")
-                return False
+                logger.warning(f"Unknown action type: {action_type}")
                 
         except Exception as e:
-            logger.exception(f"Error executing action: {e}")
-            return False
+            logger.error(f"Error executing action: {e}")
+            logger.debug(traceback.format_exc())
     
     def _cleanup(self) -> None:
-        """Clean up resources on shutdown."""
+        """Clean up resources when shutting down."""
         logger.info("Cleaning up resources...")
         
-        # Stop CLI if it was started
+        # Stop CLI controller if running
         if self.cli:
-            logger.debug("Stopping CLI controller")
-            self.cli.stop()
-        
-        # Close camera if opened
-        if self.camera:
-            logger.debug("Closing camera")
             try:
-                self.camera.close()
+                self.cli.stop()
+                logger.debug("CLI controller stopped")
             except Exception as e:
-                logger.error(f"Error closing camera: {e}")
+                logger.warning(f"Error stopping CLI controller: {e}")
         
-        # Clean up audio resources
-        if self.audio_system:
-            logger.debug("Cleaning up audio system")
-            try:
-                self.audio_system.close()
-            except Exception as e:
-                logger.error(f"Error closing audio system: {e}")
-        
-        # Clean up motion controller
+        # Clean up motion controller if available
         if self.motion:
-            logger.debug("Cleaning up motion controller")
             try:
-                self.motion.close()
+                self.motion.cleanup()
+                logger.debug("Motion controller cleaned up")
             except Exception as e:
-                logger.error(f"Error closing motion controller: {e}")
+                logger.warning(f"Error cleaning up motion controller: {e}")
+        
+        # Clean up audio system if available
+        if self.audio_system:
+            try:
+                self.audio_system.cleanup()
+                logger.debug("Audio system cleaned up")
+            except Exception as e:
+                logger.warning(f"Error cleaning up audio system: {e}")
         
         logger.info("Cleanup complete")

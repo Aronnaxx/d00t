@@ -23,7 +23,7 @@ logger = logging.getLogger("duck_vla")
 
 # Import all necessary modules
 try:
-    from duck_vla.brain.decision_loop import DecisionLoop
+    from duck_vla.core_ai.decision_loop import DecisionLoop
     logger.info("Successfully imported decision loop module")
 except ImportError as e:
     logger.critical(f"Failed to import required modules: {e}")
@@ -70,6 +70,44 @@ def parse_arguments():
         help="Path to ONNX model for simulation (default: from env var DUCK_ONNX_MODEL or system default)"
     )
     
+    # Add LLM provider options
+    llm_group = parser.add_argument_group("LLM Provider Options")
+    llm_group.add_argument(
+        "--llm-provider",
+        type=str,
+        choices=["ollama", "openai", "anthropic"],
+        default="ollama",
+        help="LLM provider to use for natural language processing (default: ollama)"
+    )
+    llm_group.add_argument(
+        "--llm-model",
+        type=str,
+        help="Specific model to use with the selected LLM provider"
+    )
+    llm_group.add_argument(
+        "--system-prompt",
+        type=str,
+        help="Custom system prompt to use for the LLM"
+    )
+    
+    # Add API authentication options
+    api_group = parser.add_argument_group("API Authentication")
+    api_group.add_argument(
+        "--openai-api-key",
+        type=str,
+        help="OpenAI API key (if not set in OPENAI_API_KEY environment variable)"
+    )
+    api_group.add_argument(
+        "--anthropic-api-key",
+        type=str,
+        help="Anthropic API key (if not set in ANTHROPIC_API_KEY environment variable)"
+    )
+    api_group.add_argument(
+        "--ollama-host",
+        type=str,
+        help="Ollama host URL (if not set in OLLAMA_HOST environment variable, defaults to http://localhost:11434)"
+    )
+    
     return parser.parse_args()
 
 def main():
@@ -80,6 +118,19 @@ def main():
     if args.debug:
         logger.setLevel(logging.DEBUG)
         logger.debug("Debug logging enabled")
+    
+    # Set API keys from command line if provided
+    if args.openai_api_key:
+        os.environ["OPENAI_API_KEY"] = args.openai_api_key
+        logger.debug("Set OpenAI API key from command line")
+        
+    if args.anthropic_api_key:
+        os.environ["ANTHROPIC_API_KEY"] = args.anthropic_api_key
+        logger.debug("Set Anthropic API key from command line")
+        
+    if args.ollama_host:
+        os.environ["OLLAMA_HOST"] = args.ollama_host
+        logger.debug(f"Set Ollama host to {args.ollama_host}")
     
     # Get vision and ONNX model settings
     vision_model = args.vision_model
@@ -96,6 +147,9 @@ def main():
     logger.info(f"Audio input/output {'disabled' if args.no_audio else 'enabled'}")
     logger.info(f"Camera input {'disabled' if args.no_camera else 'enabled'}")
     logger.info(f"CLI controller {'disabled' if args.no_cli else 'enabled'}")
+    logger.info(f"LLM provider: {args.llm_provider}")
+    if args.llm_model:
+        logger.info(f"LLM model: {args.llm_model}")
     logger.info(f"Vision model: {vision_model or os.environ.get('DUCK_VISION_MODEL', 'moondream')}")
     if onnx_model_path or os.environ.get("DUCK_ONNX_MODEL"):
         logger.info(f"ONNX model: {onnx_model_path or os.environ.get('DUCK_ONNX_MODEL')}")
@@ -108,7 +162,10 @@ def main():
             camera_enabled=not args.no_camera,
             cli_enabled=not args.no_cli,
             vision_model=vision_model,
-            onnx_model_path=onnx_model_path
+            onnx_model_path=onnx_model_path,
+            llm_provider=args.llm_provider,
+            llm_model=args.llm_model,
+            system_prompt=args.system_prompt
         )
         
         logger.info("Decision loop initialized, starting main loop")
