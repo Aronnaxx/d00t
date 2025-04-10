@@ -46,7 +46,7 @@ class DecisionLoop:
             camera_enabled: Whether to enable camera input
             cli_enabled: Whether to enable CLI for direct command input
             local_model: Whether to use a local model (Ollama) or remote API
-            vision_model: Vision model name to use (default from env or 'moondream')
+            vision_model: Vision model name to use (default from env or 'gemma3')
             onnx_model_path: Path to ONNX model for simulation (default from env or None)
             llm_provider: LLM provider to use ('ollama', 'openai', 'anthropic')
             llm_model: Specific model to use with the LLM provider
@@ -67,7 +67,7 @@ class DecisionLoop:
         self.system_prompt = system_prompt
         
         # Get vision model from environment or parameter
-        self.vision_model = vision_model or os.environ.get("DUCK_VISION_MODEL", "moondream")
+        self.vision_model = vision_model or os.environ.get("DUCK_VISION_MODEL", "gemma3")
         
         # Get ONNX model path from environment or parameter
         self.onnx_model_path = onnx_model_path or os.environ.get("DUCK_ONNX_MODEL", None)
@@ -219,7 +219,7 @@ class DecisionLoop:
             from duck_vla.utils.cli_controller import CLIController
             
             logger.debug("Initializing CLI controller")
-            self.cli = CLIController()
+            self.cli = CLIController(debug=logger.level == logging.DEBUG)
             logger.info("CLI controller initialized successfully")
         except ImportError as e:
             logger.warning(f"Failed to import CLI controller: {e}")
@@ -274,9 +274,20 @@ class DecisionLoop:
         logger.info("Starting decision loop")
         self.running = True
         
-        # Start CLI if enabled
+        # Start CLI if enabled and connect it to the central model and movement controller
         if self.cli_enabled and self.cli:
             logger.info("Starting CLI controller")
+            
+            # Connect the CLI to the central model for natural language processing
+            if self.central_model:
+                self.cli.set_central_model(self.central_model)
+                logger.debug("Connected CLI to central model for natural language processing")
+            
+            # Connect the CLI to the movement controller for direct commands
+            if self.motion:
+                self.cli.set_movement_controller(self.motion)
+                logger.debug("Connected CLI to movement controller for direct commands")
+                
             self.cli.start()
         
         try:
@@ -320,8 +331,39 @@ class DecisionLoop:
     
     def _get_command(self) -> Optional[Dict[str, Any]]:
         """Get command from available input sources."""
-        # Implementation would depend on available input modules
-        # For now, just return None
+        # Check CLI queue first
+        if self.cli_enabled and self.cli:
+            cli_command = self.cli.get_command(timeout=0.01)
+            if cli_command:
+                logger.debug(f"Got command from CLI: {cli_command}")
+                return cli_command
+                
+        # If STT is enabled, check for spoken commands
+        if self.audio_enabled and self.stt:
+            try:
+                spoken_text = self.stt.get_latest_text()
+                if spoken_text:
+                    logger.debug(f"Got spoken text: {spoken_text}")
+                    
+                    # Parse the intent if possible
+                    if self.intent_parser:
+                        intent = self.intent_parser.parse(spoken_text)
+                        if intent:
+                            logger.debug(f"Parsed intent: {intent}")
+                            return intent
+                    
+                    # If no intent was parsed but we have a central model,
+                    # we can still try to process as natural language
+                    if self.central_model:
+                        return {
+                            "intent_type": "natural_language",
+                            "text": spoken_text,
+                            "confidence": 0.8,
+                            "original_text": spoken_text
+                        }
+            except Exception as e:
+                logger.error(f"Error getting speech input: {e}")
+                
         return None
     
     def _get_vision(self) -> Optional[Dict[str, Any]]:

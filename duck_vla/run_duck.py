@@ -62,7 +62,7 @@ def parse_arguments():
     parser.add_argument(
         "--vision-model",
         type=str,
-        help="Vision model to use (default: from env var DUCK_VISION_MODEL or 'moondream')"
+        help="Vision model to use (default: from env var DUCK_VISION_MODEL or 'gemma3')"
     )
     parser.add_argument(
         "--onnx-model",
@@ -150,7 +150,7 @@ def main():
     logger.info(f"LLM provider: {args.llm_provider}")
     if args.llm_model:
         logger.info(f"LLM model: {args.llm_model}")
-    logger.info(f"Vision model: {vision_model or os.environ.get('DUCK_VISION_MODEL', 'moondream')}")
+    logger.info(f"Vision model: {vision_model or os.environ.get('DUCK_VISION_MODEL', 'gemma3')}")
     if onnx_model_path or os.environ.get("DUCK_ONNX_MODEL"):
         logger.info(f"ONNX model: {onnx_model_path or os.environ.get('DUCK_ONNX_MODEL')}")
     

@@ -65,8 +65,8 @@ def parse_arguments():
     model_group.add_argument(
         "--vision-model",
         type=str,
-        default="moondream",
-        help="Vision model to use (default: moondream)"
+        default="gemma3",
+        help="Vision model to use (default: gemma3)"
     )
     model_group.add_argument(
         "--onnx-model",
@@ -139,7 +139,7 @@ def find_onnx_model():
     logger.warning("No ONNX model found in any of the expected locations")
     return None
 
-def setup_ollama_model(model_name="moondream", debug=False):
+def setup_ollama_model(model_name="gemma3", debug=False):
     """Set up the specified Ollama model."""
     logger.info(f"Setting up Ollama model: {model_name}")
     
@@ -263,7 +263,7 @@ def run_mujoco_simulation(onnx_model_path, debug=False):
         logger.info("Received keyboard interrupt, terminating...")
         return 0
 
-def run_cli_mode(vision_model="moondream", no_camera=False, no_audio=False, debug=False, verbose_vision=False):
+def run_cli_mode(vision_model="gemma3", no_camera=False, no_audio=False, debug=False, verbose_vision=False):
     """Run Duck VLA with CLI control."""
     logger.info("Running Duck VLA with CLI control...")
     

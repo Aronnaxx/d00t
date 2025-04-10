@@ -6,7 +6,7 @@ import tempfile
 import os
 from typing import Optional, Dict, Any, Union, Generator
 
-# Import our LLM providers
+# Import our LLM provider
 from duck_vla.core_ai.llm_provider import LLMProviderFactory, LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ Respond in python code ONLY. Don't use any loops, if statements, or indentation 
     def __init__(
         self,
         provider_type: str = "ollama",
-        model_name: Optional[str] = None,
+        model_name: Optional[str] = "gemma:latest",
         system_prompt: Optional[str] = None,
         action_prompt: Optional[str] = None,
         debug_mode: bool = False,
@@ -57,7 +57,7 @@ Respond in python code ONLY. Don't use any loops, if statements, or indentation 
         Initialize the central model.
         
         Args:
-            provider_type: LLM provider type ('ollama', 'openai', 'anthropic')
+            provider_type: LLM provider type ("ollama")
             model_name: Specific model name to use with the provider
             system_prompt: Custom system prompt to use
             action_prompt: Custom action prompt template
@@ -72,33 +72,47 @@ Respond in python code ONLY. Don't use any loops, if statements, or indentation 
         self.action_prompt = action_prompt or self.DEFAULT_ACTION_PROMPT
         
         # Initialize LLM provider
-        logger.info(f"Initializing LLM provider: {provider_type}")
         self.provider_type = provider_type
         self.model_name = model_name
+        logger.info(f"Initializing {provider_type} provider with model: {model_name}")
         
         self._initialize_provider()
     
     def _initialize_provider(self):
-        """Initialize the LLM provider"""
+        """Initialize the LLM provider using the factory"""
         try:
-            self.llm = LLMProviderFactory.create_provider(
-                self.provider_type, 
-                self.model_name
+            # Create the provider using the factory
+            self.llm_provider = LLMProviderFactory.create_provider(
+                provider_type=self.provider_type,
+                model_name=self.model_name
             )
             
             # Check if provider is available
-            if not self.llm.is_available():
-                logger.warning(f"{self.provider_type} provider not available, falling back to default")
-                self.llm = LLMProviderFactory.get_default_provider()
-                self.provider_type = "default fallback"
+            if not self.llm_provider.is_available():
+                logger.warning(f"{self.provider_type} provider not available")
                 
-            logger.info(f"Using {self.provider_type} provider")
-            
+                # Try to pull the model
+                try:
+                    logger.info(f"Attempting to pull model {self.model_name}...")
+                    self.llm_provider.pull_model()
+                except Exception as e:
+                    logger.error(f"Failed to pull model: {e}")
+                    if self.provider_type == "ollama":
+                        logger.warning("Make sure Ollama is running with: ollama serve")
+            else:
+                logger.info(f"Using {self.provider_type} provider with model {self.model_name}")
+                
+                # Check if model is in the list of available models
+                models = self.llm_provider.get_models()
+                if self.model_name not in models:
+                    logger.warning(f"Model {self.model_name} not found in available models")
+                    logger.info(f"Available models: {', '.join(models)}")
+                    logger.info(f"Attempting to pull model {self.model_name}...")
+                    self.llm_provider.pull_model()
+                
         except Exception as e:
             logger.error(f"Failed to initialize LLM provider: {e}")
-            logger.warning("Falling back to default provider")
-            self.llm = LLMProviderFactory.get_default_provider()
-            self.provider_type = "default fallback"
+            self.llm_provider = None
     
     def generate_response(
         self, 
@@ -119,10 +133,14 @@ Respond in python code ONLY. Don't use any loops, if statements, or indentation 
         Returns:
             Generated response as string or generator if streaming
         """
+        if not self.llm_provider:
+            logger.error("LLM provider not available")
+            return "I'm sorry, I'm having trouble connecting to my brain. Make sure the LLM provider is running."
+            
         logger.debug(f"Generating response for input: {user_input}")
         
         # Generate response using LLM provider
-        return self.llm.generate(
+        return self.llm_provider.generate(
             prompt=user_input,
             system_prompt=self.system_prompt,
             temperature=temperature,
@@ -149,6 +167,10 @@ Respond in python code ONLY. Don't use any loops, if statements, or indentation 
         Returns:
             Generated Python code as string or generator if streaming
         """
+        if not self.llm_provider:
+            logger.error("LLM provider not available")
+            return "say('I\\'m sorry, I\\'m having trouble connecting to my brain. Make sure the LLM provider is running.')"
+            
         logger.debug(f"Processing command: {command}")
         
         # Construct the prompt with action template
@@ -159,7 +181,7 @@ Respond in python code ONLY. Don't use any loops, if statements, or indentation 
         prompt = f"{self.action_prompt}{context_str}\n\nRequest: {command}\nCode:"
         
         # Generate Python code using LLM provider
-        return self.llm.generate(
+        return self.llm_provider.generate(
             prompt=prompt,
             system_prompt=self.system_prompt,
             temperature=temperature,
@@ -177,26 +199,74 @@ Respond in python code ONLY. Don't use any loops, if statements, or indentation 
         self.action_prompt = new_prompt
         logger.debug(f"Updated action prompt: {new_prompt}")
         
-    def switch_provider(self, provider_type: str, model_name: Optional[str] = None) -> bool:
+    def switch_model(self, model_name: str) -> bool:
         """
-        Switch to a different LLM provider.
+        Switch to a different model within the same provider.
         
         Args:
-            provider_type: The provider type to switch to
-            model_name: Optional model name for the new provider
+            model_name: The model name to switch to
             
         Returns:
             True if switch was successful, False otherwise
         """
         try:
-            logger.info(f"Switching provider to {provider_type}")
-            new_provider = LLMProviderFactory.create_provider(provider_type, model_name)
+            logger.info(f"Switching to model: {model_name}")
+            
+            # Create a new provider with the new model
+            new_provider = LLMProviderFactory.create_provider(
+                provider_type=self.provider_type,
+                model_name=model_name
+            )
             
             if new_provider.is_available():
-                self.llm = new_provider
-                self.provider_type = provider_type
+                # Check if model is available
+                models = new_provider.get_models()
+                if model_name not in models:
+                    logger.info(f"Model {model_name} not found, pulling it now...")
+                    if not new_provider.pull_model():
+                        logger.warning(f"Failed to pull model {model_name}")
+                        return False
+                
+                self.llm_provider = new_provider
                 self.model_name = model_name
-                logger.info(f"Successfully switched to {provider_type}")
+                logger.info(f"Successfully switched to model {model_name}")
+                return True
+            else:
+                logger.warning(f"Provider not available")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Failed to switch model: {e}")
+            return False
+            
+    def switch_provider(self, provider_type: str, model_name: Optional[str] = None) -> bool:
+        """
+        Switch to a different provider and/or model.
+        
+        Args:
+            provider_type: The provider type to switch to
+            model_name: Optional model name to use, or None for default
+            
+        Returns:
+            True if switch was successful, False otherwise
+        """
+        try:
+            logger.info(f"Switching to provider: {provider_type}")
+            
+            # Create a new provider with the specified type
+            new_provider = LLMProviderFactory.create_provider(
+                provider_type=provider_type,
+                model_name=model_name or self.model_name
+            )
+            
+            if new_provider.is_available():
+                self.llm_provider = new_provider
+                self.provider_type = provider_type
+                
+                if model_name:
+                    self.model_name = model_name
+                    
+                logger.info(f"Successfully switched to provider {provider_type}")
                 return True
             else:
                 logger.warning(f"Provider {provider_type} not available")
@@ -205,3 +275,49 @@ Respond in python code ONLY. Don't use any loops, if statements, or indentation 
         except Exception as e:
             logger.error(f"Failed to switch provider: {e}")
             return False
+
+    def process_natural_language(self, 
+                                text: str, 
+                                context: Optional[Dict[str, Any]] = None,
+                                temperature: float = 0.7) -> str:
+        """
+        Process natural language input and generate a response.
+        
+        This is different from process_command as it returns a conversational
+        response rather than executable code.
+        
+        Args:
+            text: User text input
+            context: Additional context for the interaction
+            temperature: Sampling temperature
+            
+        Returns:
+            Generated text response
+        """
+        if not self.llm_provider:
+            logger.error("LLM provider not available")
+            return "I'm sorry, I'm having trouble connecting to my brain. Make sure the LLM provider is running."
+            
+        logger.debug(f"Processing natural language: {text}")
+        
+        # Construct a prompt for conversation
+        context_str = ""
+        if context:
+            context_str = "\nContext:\n" + "\n".join([f"{k}: {v}" for k, v in context.items()])
+        
+        # Simple conversational prompt
+        prompt = f"User: {text}{context_str}\nRespond as the Duck VLA robot:\n"
+        
+        try:
+            # Generate response using LLM provider
+            response = self.llm_provider.generate(
+                prompt=prompt,
+                system_prompt=self.system_prompt,
+                temperature=temperature,
+                max_tokens=500,
+                stream=False
+            )
+            return response
+        except Exception as e:
+            logger.error(f"Error processing natural language: {e}")
+            return "I'm sorry, I'm having trouble processing that right now. Make sure the LLM provider is running."

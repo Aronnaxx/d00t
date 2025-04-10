@@ -41,7 +41,7 @@ Input/Output Options:
 
 Model Options:
   --vision-model VISION_MODEL
-                        Vision model to use (default: moondream)
+                        Vision model to use (default: gemma3)
   --onnx-model ONNX_MODEL
                         Path to specific ONNX model file (will auto-detect if not specified)
 
@@ -204,9 +204,11 @@ Common issues and solutions:
    - Run `uv run doot.py --setup` to set up the environment
    - Run `uv run doot.py --test-imports` to verify imports work
 
-3. **Vision model issues:**
-   - Ensure Ollama is installed and running
+3. **Ollama issues:**
+   - Ensure Ollama is installed and running with `ollama serve`
    - Check that the model is available with `ollama list`
+   - Pull required models with `ollama pull gemma:latest`
+   - The Duck VLA system exclusively uses Ollama for LLM functionality
 
 4. **PortAudio library not found:**
    - Install the portaudio development package with `sudo apt install portaudio19-dev`

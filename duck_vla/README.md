@@ -36,8 +36,6 @@ graph TD
     B -- Emote Commands --> E2
     
     D4 --> L1[Ollama - Local]
-    D4 --> L2[OpenAI API]
-    D4 --> L3[Anthropic API]
 ```
 
 ## Components
@@ -75,36 +73,21 @@ The `action` module includes:
 
 - **CLIController**: Provides a command-line interface for direct control without using voice.
 
-## LLM Provider Options
+## LLM Provider
 
-Duck VLA supports multiple LLM providers:
+Duck VLA uses Ollama as its LLM provider:
 
-1. **Ollama (Default)**: Runs locally, providing completely offline operation.
+1. **Ollama**: Runs locally, providing completely offline operation.
    - Fast, private, and doesn't require internet access
-   - Supports various models like Mistral, Llama, etc.
-
-2. **OpenAI API**: Uses OpenAI's cloud-based models.
-   - Provides high-quality responses with GPT-3.5/GPT-4
-   - Requires an API key and internet connection
-
-3. **Anthropic API**: Uses Anthropic's Claude models.
-   - Known for thoughtful, balanced responses
-   - Requires an API key and internet connection
+   - Supports various models like Mistral, Llama, Gemma, etc.
+   - Recommended models: gemma:latest, mistral:latest, or llama3:latest
 
 ```mermaid
 graph TD
     A[LLM Provider System] --> B[LLM Provider Factory]
     B --> C[Ollama Provider]
-    B --> D[OpenAI Provider]
-    B --> E[Anthropic Provider]
-    
     C --> F[Local Inference]
-    D --> G[API Requests]
-    E --> H[API Requests]
-    
     F --> I[Ollama Server]
-    G --> J[OpenAI Services]
-    H --> K[Anthropic Services]
 ```
 
 ## Movement Controller
@@ -166,31 +149,26 @@ The system can run in simulation mode which:
    ./setup_duck_vla.sh
    ```
 
-2. Ensure Ollama is running (if using local model):
+2. Ensure Ollama is running:
    ```
    ollama serve
    ```
 
-3. Pull a model for Ollama (if using local model):
+3. Pull a model for Ollama:
    ```
-   ollama pull mistral:latest
+   ollama pull gemma:latest
    ```
 
 ### Running the System
 
-- **Run with all features (using local Ollama)**:
+- **Run with all features (using Ollama)**:
   ```
   python -m duck_vla.run_duck
   ```
 
-- **Run using OpenAI API**:
+- **Run with a specific Ollama model**:
   ```
-  python -m duck_vla.run_duck --llm-provider openai --llm-model gpt-3.5-turbo --openai-api-key YOUR_API_KEY
-  ```
-
-- **Run using Anthropic API**:
-  ```
-  python -m duck_vla.run_duck --llm-provider anthropic --llm-model claude-3-sonnet-20240229 --anthropic-api-key YOUR_API_KEY
+  python -m duck_vla.run_duck --llm-model llama3:latest
   ```
 
 - **Run with CLI only (no audio/speech)**:
@@ -213,9 +191,8 @@ The system can run in simulation mode which:
 ```
 usage: run_duck.py [-h] [--debug] [--simulate] [--no-audio] [--no-camera] [--no-cli]
                   [--vision-model VISION_MODEL] [--onnx-model ONNX_MODEL]
-                  [--llm-provider {ollama,openai,anthropic}] [--llm-model LLM_MODEL]
-                  [--system-prompt SYSTEM_PROMPT] [--openai-api-key OPENAI_API_KEY]
-                  [--anthropic-api-key ANTHROPIC_API_KEY] [--ollama-host OLLAMA_HOST]
+                  [--llm-model LLM_MODEL] [--system-prompt SYSTEM_PROMPT]
+                  [--ollama-host OLLAMA_HOST]
 
 Duck VLA - Vision-Language-Action Control System
 
@@ -230,13 +207,8 @@ options:
   --onnx-model ONNX_MODEL           Path to ONNX model for simulation
 
 LLM Provider Options:
-  --llm-provider {ollama,openai,anthropic}  LLM provider to use (default: ollama)
-  --llm-model LLM_MODEL             Specific model to use with the selected LLM provider
+  --llm-model LLM_MODEL             Specific model to use with Ollama (default: gemma:latest)
   --system-prompt SYSTEM_PROMPT     Custom system prompt to use for the LLM
-
-API Authentication:
-  --openai-api-key OPENAI_API_KEY   OpenAI API key
-  --anthropic-api-key ANTHROPIC_API_KEY  Anthropic API key
   --ollama-host OLLAMA_HOST         Ollama host URL (default: http://localhost:11434)
 ```
 

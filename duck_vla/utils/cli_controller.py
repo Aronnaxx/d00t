@@ -1,361 +1,398 @@
 """
-CLI Controller for Duck VLA system
+CLI Controller for Duck VLA system.
 
-This module provides a command-line interface to control the Duck VLA system
-through typed commands instead of voice.
+This module provides a command-line interface for controlling
+the Duck VLA system through text commands.
 """
 
-import logging
-import time
-import threading
-import queue
 import cmd
-from typing import Dict, Any, Optional, List
+import logging
+import threading
+import time
+import queue
+import re
+from typing import Optional, Dict, Any, Callable, List, Tuple
 
 logger = logging.getLogger(__name__)
 
-class DuckCLI(cmd.Cmd):
+class CLIController(cmd.Cmd):
     """
     Command-line interface for controlling the Duck VLA system.
     
-    This allows direct text input of commands instead of using voice commands.
+    This class extends Python's cmd module to provide a command-line
+    interface for sending commands to the Duck VLA system.
     """
     
-    prompt = "duck> "
-    intro = "Duck VLA CLI Controller. Type 'help' for available commands."
+    INTRO = "Duck VLA CLI Controller. Type 'help' for available commands."
+    PROMPT = "duck> "
     
-    def __init__(self, command_queue: queue.Queue):
+    def __init__(self, debug: bool = False):
         """
         Initialize the CLI controller.
         
         Args:
-            command_queue: Queue to put commands into for processing by the main loop
+            debug: Whether to enable debug logging
         """
         super().__init__()
-        self.command_queue = command_queue
-        self.running = False
-        logger.debug("CLI controller initialized")
-    
-    def do_move(self, arg):
-        """
-        Move the duck in a direction.
         
-        Usage: 
-          move forward [speed] [duration]
-          move backward [speed] [duration]
-          move left [speed] [duration]
-          move right [speed] [duration]
-          
-        Examples:
-          move forward        (Move forward at default speed continuously)
-          move forward 0.7    (Move forward at 70% speed continuously)
-          move forward 0.5 2  (Move forward at 50% speed for 2 seconds)
-        """
-        args = arg.split()
-        if not args:
-            print("Error: Direction required. Use 'forward', 'backward', 'left', or 'right'.")
-            return
-        
-        direction = args[0].lower()
-        if direction not in ["forward", "backward", "left", "right"]:
-            print(f"Error: Unknown direction '{direction}'. Use 'forward', 'backward', 'left', or 'right'.")
-            return
-        
-        speed = 0.5  # Default speed
-        duration = None  # Default duration (continuous)
-        
-        # Parse speed if provided
-        if len(args) > 1:
-            try:
-                speed = float(args[1])
-                speed = max(0.0, min(1.0, speed))  # Clamp to 0.0-1.0
-            except ValueError:
-                print(f"Error: Invalid speed '{args[1]}'. Use a number between 0.0 and 1.0.")
-                return
-        
-        # Parse duration if provided
-        if len(args) > 2:
-            try:
-                duration = float(args[2])
-                if duration <= 0:
-                    print("Error: Duration must be positive.")
-                    return
-            except ValueError:
-                print(f"Error: Invalid duration '{args[2]}'. Use a positive number.")
-                return
-        
-        # Create and queue command
-        command = {
-            "action_type": "move",
-            "params": {
-                "direction": direction,
-                "speed": speed,
-                "duration": duration
-            }
-        }
-        
-        self.command_queue.put(command)
-        duration_str = f" for {duration}s" if duration else " continuously"
-        print(f"Moving {direction} at {speed*100:.0f}% speed{duration_str}")
-    
-    def do_turn(self, arg):
-        """
-        Turn the duck.
-        
-        Usage:
-          turn left [rate] [angle]
-          turn right [rate] [angle]
-          turn around [rate]
-          
-        Examples:
-          turn left           (Turn left at default rate continuously)
-          turn right 0.7      (Turn right at 70% rate continuously)
-          turn left 0.5 90    (Turn left at 50% rate for 90 degrees)
-          turn around         (Turn around 180 degrees)
-        """
-        args = arg.split()
-        if not args:
-            print("Error: Direction required. Use 'left', 'right', or 'around'.")
-            return
-        
-        direction = args[0].lower()
-        if direction not in ["left", "right", "around"]:
-            print(f"Error: Unknown direction '{direction}'. Use 'left', 'right', or 'around'.")
-            return
-        
-        rate = 0.5  # Default rate
-        angle = None  # Default angle (continuous)
-        
-        if direction == "around":
-            angle = 180.0  # Default angle for "around"
-        
-        # Parse rate if provided
-        if len(args) > 1:
-            try:
-                rate = float(args[1])
-                rate = max(0.0, min(1.0, rate))  # Clamp to 0.0-1.0
-            except ValueError:
-                print(f"Error: Invalid rate '{args[1]}'. Use a number between 0.0 and 1.0.")
-                return
-        
-        # Parse angle if provided
-        if len(args) > 2 and direction != "around":  # "around" already has a fixed angle
-            try:
-                angle = float(args[2])
-                if angle <= 0:
-                    print("Error: Angle must be positive.")
-                    return
-            except ValueError:
-                print(f"Error: Invalid angle '{args[2]}'. Use a positive number.")
-                return
-        
-        # Create and queue command
-        command = {
-            "action_type": "turn",
-            "params": {
-                "direction": direction,
-                "rate": rate,
-                "angle": angle
-            }
-        }
-        
-        self.command_queue.put(command)
-        angle_str = f" by {angle}°" if angle else " continuously"
-        print(f"Turning {direction} at {rate*100:.0f}% rate{angle_str}")
-    
-    def do_look(self, arg):
-        """
-        Point the duck's head.
-        
-        Usage:
-          look at <target>       (Look at named target: person, up, down, left, right)
-          look yaw,pitch,roll    (Set specific head angles in degrees)
-          
-        Examples:
-          look at person         (Look at a person)
-          look at up             (Look up)
-          look 30,10,0           (Look 30° right, 10° up, no roll)
-        """
-        if not arg:
-            print("Error: Target or angles required. Use 'look at <target>' or 'look yaw,pitch,roll'.")
-            return
-        
-        parts = arg.split()
-        
-        # Handle "look at <target>"
-        if parts[0].lower() == "at" and len(parts) > 1:
-            target = parts[1].lower()
-            valid_targets = ["person", "up", "down", "left", "right"]
-            if target not in valid_targets:
-                print(f"Error: Unknown target '{target}'. Valid targets: {', '.join(valid_targets)}")
-                return
+        self.debug = debug
+        if debug:
+            logger.setLevel(logging.DEBUG)
             
-            command = {
-                "action_type": "look_at",
-                "params": {
-                    "target": target
-                }
-            }
-            
-            self.command_queue.put(command)
-            print(f"Looking at {target}")
-            return
+        self.intro = self.INTRO
+        self.prompt = self.PROMPT
         
-        # Handle direct angle specification
-        try:
-            angles = [float(a.strip()) for a in arg.split(",")]
-            if len(angles) != 3:
-                print("Error: When specifying angles directly, provide all three: yaw,pitch,roll")
-                return
-            
-            yaw, pitch, roll = angles
-            
-            # Validate angle ranges
-            if not -45 <= yaw <= 45:
-                print("Warning: Yaw should be between -45 and 45 degrees")
-            if not -30 <= pitch <= 30:
-                print("Warning: Pitch should be between -30 and 30 degrees")
-            if not -20 <= roll <= 20:
-                print("Warning: Roll should be between -20 and 20 degrees")
-            
-            command = {
-                "action_type": "look_at",
-                "params": {
-                    "yaw": yaw,
-                    "pitch": pitch,
-                    "roll": roll
-                }
-            }
-            
-            self.command_queue.put(command)
-            print(f"Setting head position to yaw={yaw}°, pitch={pitch}°, roll={roll}°")
-            
-        except ValueError:
-            print("Error: Invalid angle format. Use comma-separated numbers: yaw,pitch,roll")
-    
-    def do_emote(self, arg):
-        """
-        Play an emote or sound.
-        
-        Usage:
-          emote <name>
-          
-        Examples:
-          emote happy
-          emote confused
-          emote hello
-        """
-        if not arg:
-            print("Error: Emote name required.")
-            return
-        
-        emote_name = arg.strip().lower()
-        command = {
-            "action_type": "emote",
-            "params": {
-                "emote": emote_name
-            }
-        }
-        
-        self.command_queue.put(command)
-        print(f"Playing emote: {emote_name}")
-    
-    def do_stop(self, arg):
-        """Stop all duck movement."""
-        command = {
-            "action_type": "stop",
-            "params": {}
-        }
-        
-        self.command_queue.put(command)
-        print("Stopping all movement")
-    
-    def do_status(self, arg):
-        """Get the current duck status."""
-        command = {
-            "action_type": "get_status",
-            "params": {}
-        }
-        
-        self.command_queue.put(command)
-        print("Requesting status...")
-    
-    def do_exit(self, arg):
-        """Exit the CLI controller."""
-        print("Exiting CLI controller...")
-        self.running = False
-        return True
-    
-    def do_quit(self, arg):
-        """Exit the CLI controller."""
-        return self.do_exit(arg)
-    
-    def do_EOF(self, arg):
-        """Exit on Ctrl+D."""
-        print()  # Print newline before exiting
-        return self.do_exit(arg)
-
-class CLIController:
-    """
-    Controller for managing the CLI interface in a separate thread.
-    """
-    
-    def __init__(self):
-        """Initialize the CLI controller."""
+        # Queue for commands from CLI to decision loop
         self.command_queue = queue.Queue()
-        self.cli = DuckCLI(self.command_queue)
+        
+        # Thread for running the CLI
         self.cli_thread = None
         self.running = False
+        
+        # Central model for processing natural language
+        self.central_model = None
+        
+        # Movement controller for direct commands
+        self.movement = None
+        
+        logger.debug("CLI controller initialized")
         logger.info("CLI controller initialized")
-    
+        
     def start(self):
         """Start the CLI controller in a separate thread."""
-        if self.running:
+        if self.cli_thread is not None and self.cli_thread.is_alive():
             logger.warning("CLI controller already running")
             return
-        
+            
         self.running = True
-        self.cli.running = True
-        self.cli_thread = threading.Thread(target=self._run_cli, daemon=True)
+        self.cli_thread = threading.Thread(target=self._run_cli)
+        self.cli_thread.daemon = True
         self.cli_thread.start()
         logger.info("CLI controller started")
-    
-    def _run_cli(self):
-        """Run the CLI loop."""
-        try:
-            self.cli.cmdloop()
-        except Exception as e:
-            logger.exception(f"Error in CLI thread: {e}")
-        finally:
-            logger.info("CLI thread exiting")
-            self.running = False
-    
-    def get_command(self, timeout=0.1):
-        """
-        Get a command from the queue if available.
         
-        Args:
-            timeout: How long to wait for a command (seconds)
-            
-        Returns:
-            Command dict or None if no command available
-        """
-        try:
-            return self.command_queue.get(block=True, timeout=timeout)
-        except queue.Empty:
-            return None
-    
     def stop(self):
         """Stop the CLI controller."""
-        logger.info("Stopping CLI controller")
         self.running = False
-        self.cli.running = False
+        if self.cli_thread and self.cli_thread.is_alive():
+            # The thread will terminate on next prompt
+            logger.debug("Waiting for CLI thread to terminate")
+            self.cli_thread.join(timeout=1.0)
+            
+        logger.info("CLI controller stopped")
         
-        # If running in same thread (for testing), this would exit immediately
-        if not self.cli_thread or not self.cli_thread.is_alive():
-            return
+    def _run_cli(self):
+        """Run the CLI loop in a separate thread."""
+        while self.running:
+            try:
+                self.cmdloop()
+                break
+            except KeyboardInterrupt:
+                print("\nKeyboard interrupt. Type 'exit' or 'quit' to exit.")
+            except Exception as e:
+                logger.error(f"Error in CLI loop: {e}")
+                time.sleep(1)  # Prevent fast-spinning on error
+                
+    def set_central_model(self, central_model):
+        """Set the central model for processing natural language"""
+        self.central_model = central_model
         
-        # Give the thread a chance to exit gracefully
-        self.cli_thread.join(1.0)
-        if self.cli_thread.is_alive():
-            logger.warning("CLI thread did not exit gracefully") 
+    def set_movement_controller(self, movement):
+        """Set the movement controller for direct commands"""
+        self.movement = movement
+    
+    def get_command(self, timeout: Optional[float] = None) -> Optional[Dict[str, Any]]:
+        """
+        Get the next command from the queue.
+        
+        Args:
+            timeout: Maximum time to wait for a command
+            
+        Returns:
+            Command dictionary or None if queue is empty
+        """
+        try:
+            return self.command_queue.get(block=timeout is not None, timeout=timeout)
+        except queue.Empty:
+            return None
+        
+    def default(self, line: str) -> bool:
+        """
+        Handle unknown commands as natural language input.
+        
+        Args:
+            line: Command line entered by the user
+            
+        Returns:
+            True to continue, False to stop
+        """
+        # Check if central model is available for natural language processing
+        if self.central_model:
+            try:
+                # Process the line as natural language
+                response = self.central_model.process_natural_language(line)
+                print(response)
+                return True
+            except Exception as e:
+                logger.error(f"Error processing natural language: {e}")
+                print(f"Error: {e}")
+                print("Make sure Ollama is running with 'ollama serve' and a model is pulled.")
+                return True
+        else:
+            print(f"Unknown syntax: {line}")
+            print("Natural language processing not available. Try basic commands like 'move forward'.")
+            return True
+        
+    def emptyline(self) -> bool:
+        """Do nothing on empty line."""
+        return True
+        
+    def do_exit(self, arg: str) -> bool:
+        """Exit the CLI controller."""
+        return self._do_quit(arg)
+        
+    def do_quit(self, arg: str) -> bool:
+        """Exit the CLI controller."""
+        return self._do_quit(arg)
+        
+    def _do_quit(self, arg: str) -> bool:
+        """Shared implementation for exit and quit commands."""
+        print("Exiting CLI controller.")
+        self.running = False
+        return True
+        
+    def do_move(self, arg: str) -> bool:
+        """
+        Move the duck in a specified direction.
+        
+        Usage: move <direction> [speed] [duration]
+        
+        Examples:
+            move forward
+            move backward 0.5
+            move forward 0.7 2.0
+        """
+        args = arg.lower().split()
+        if not args:
+            print("Error: Direction required.")
+            return True
+            
+        direction = args[0]
+        speed = float(args[1]) if len(args) > 1 else 0.5
+        duration = float(args[2]) if len(args) > 2 else 1.0
+        
+        if self.movement:
+            if direction == "forward":
+                self.movement.move_forward(speed, duration)
+            elif direction == "backward":
+                self.movement.move_backward(speed, duration)
+            else:
+                print(f"Unknown direction: {direction}")
+        else:
+            # Queue command for the decision loop
+            command = {
+                "intent_type": f"move_{direction}",
+                "action_type": "move",
+                "params": {"direction": direction, "speed": speed, "duration": duration},
+                "confidence": 1.0,
+                "original_text": arg
+            }
+            self.command_queue.put(command)
+            print(f"Queued movement command: {direction}, speed={speed}, duration={duration}")
+            
+        return True
+        
+    def do_turn(self, arg: str) -> bool:
+        """
+        Turn the duck in a specified direction.
+        
+        Usage: turn <direction> [speed] [duration]
+        
+        Examples:
+            turn left
+            turn right 0.5
+            turn left 0.7 2.0
+        """
+        args = arg.lower().split()
+        if not args:
+            print("Error: Direction required.")
+            return True
+            
+        direction = args[0]
+        speed = float(args[1]) if len(args) > 1 else 0.5
+        duration = float(args[2]) if len(args) > 2 else 1.0
+        
+        if self.movement:
+            if direction == "left":
+                self.movement.turn_left(speed, duration)
+            elif direction == "right":
+                self.movement.turn_right(speed, duration)
+            else:
+                print(f"Unknown direction: {direction}")
+        else:
+            # Queue command for the decision loop
+            command = {
+                "intent_type": f"turn_{direction}",
+                "action_type": "turn",
+                "params": {"direction": direction, "speed": speed, "duration": duration},
+                "confidence": 1.0,
+                "original_text": arg
+            }
+            self.command_queue.put(command)
+            print(f"Queued turn command: {direction}, speed={speed}, duration={duration}")
+            
+        return True
+        
+    def do_look(self, arg: str) -> bool:
+        """
+        Control the duck's head position.
+        
+        Usage: 
+            look <direction>
+            look at <target>
+            
+        Examples:
+            look up
+            look down
+            look left
+            look right
+            look at person
+        """
+        if not arg:
+            print("Error: Direction or target required.")
+            return True
+            
+        # Check for "look at <target>" pattern
+        at_match = re.match(r"at\s+(.+)", arg.lower())
+        if at_match:
+            target = at_match.group(1)
+            
+            # Queue command for the decision loop
+            command = {
+                "intent_type": "look_at",
+                "action_type": "look_at",
+                "params": {"target": target},
+                "confidence": 1.0,
+                "original_text": arg
+            }
+            self.command_queue.put(command)
+            print(f"Queued look at command: {target}")
+            return True
+            
+        # Handle direction
+        direction = arg.lower()
+        
+        if self.movement:
+            if direction == "up":
+                self.movement.look_up()
+            elif direction == "down":
+                self.movement.look_down()
+            elif direction == "left":
+                self.movement.look_left()
+            elif direction == "right":
+                self.movement.look_right()
+            else:
+                print(f"Unknown direction: {direction}")
+        else:
+            # Queue command for the decision loop
+            command = {
+                "intent_type": f"look_{direction}",
+                "action_type": "look",
+                "params": {"direction": direction},
+                "confidence": 1.0,
+                "original_text": arg
+            }
+            self.command_queue.put(command)
+            print(f"Queued look command: {direction}")
+            
+        return True
+        
+    def do_stop(self, arg: str) -> bool:
+        """
+        Stop all movement.
+        
+        Usage: stop
+        """
+        if self.movement:
+            self.movement.stop()
+        else:
+            # Queue command for the decision loop
+            command = {
+                "intent_type": "stop",
+                "action_type": "stop",
+                "params": {},
+                "confidence": 1.0,
+                "original_text": "stop"
+            }
+            self.command_queue.put(command)
+            print("Queued stop command")
+            
+        return True
+        
+    def do_status(self, arg: str) -> bool:
+        """
+        Get current status of the duck.
+        
+        Usage: status
+        """
+        # This would query the decision loop for current status
+        print("Status information not available yet")
+        return True
+        
+    def do_emote(self, arg: str) -> bool:
+        """
+        Express an emotion or play a sound.
+        
+        Usage: emote <name> [intensity]
+        
+        Examples:
+            emote happy
+            emote sad 0.8
+        """
+        args = arg.lower().split()
+        if not args:
+            print("Error: Emote name required.")
+            return True
+            
+        emote_name = args[0]
+        intensity = float(args[1]) if len(args) > 1 else 0.5
+        
+        # Queue command for the decision loop
+        command = {
+            "intent_type": f"emote_{emote_name}",
+            "action_type": "emote",
+            "params": {"emote": emote_name, "intensity": intensity},
+            "confidence": 1.0,
+            "original_text": arg
+        }
+        self.command_queue.put(command)
+        print(f"Queued emote command: {emote_name}, intensity={intensity}")
+        
+        return True
+        
+    def do_chat(self, arg: str) -> bool:
+        """
+        Directly chat with the Duck VLA using the LLM.
+        
+        Usage: chat <message>
+        
+        Examples:
+            chat What's the weather like?
+            chat Tell me a joke.
+        """
+        if not arg:
+            print("Error: Message required.")
+            return True
+            
+        if self.central_model:
+            try:
+                # Process the message through the LLM
+                response = self.central_model.process_natural_language(arg)
+                print(response)
+            except Exception as e:
+                logger.error(f"Error processing chat: {e}")
+                print(f"Error: {e}")
+        else:
+            print("Natural language processing not available.")
+            print("Make sure Ollama is running with 'ollama serve' and a model is pulled.")
+            
+        return True 
