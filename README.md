@@ -1,7 +1,9 @@
 
-# 🦆 Duck VLA: Vision-Language-Action Control System
+#  d00t VLA: Vision-Language-Action Control System
 
-This project enables a duck droid to autonomously move, observe, and respond to people using a **Vision-Language-Action (VLA)** stack. It runs on a **Radxa Zero 3W** and integrates an Arducam, speaker, and microphone. The droid already supports walking and expressive emotes controlled by an Xbox joystick—this adds autonomous reasoning on top.
+![image](https://github.com/user-attachments/assets/66329a7f-48a8-433a-a3c7-a414d7a0de80)
+
+This project enables a duck droid to autonomously move, observe, and respond to people using a **Vision-Language-Action (VLA)** stack. It runs on a **Radxa Zero 3W** locally, and an Raspberry Pi Zero 2 W with an API key. It integrates an Arducam, speaker, and microphone. The droid already supports walking and expressive emotes controlled by an Xbox joystick — this adds autonomous reasoning on top.
 
 ---
 
@@ -93,25 +95,11 @@ duck_vla/
 
 | Command                  | Behavior                                  |
 |--------------------------|-------------------------------------------|
-| “Duckie, come here”      | Detects person, walks to them, beeps happily |
+| “BD, come here”      | Detects person, walks to them, beeps happily |
 | “What do you see?”       | Captions image and plays curious beep     |
 | “Turn around”            | Executes a 180° turn with dramatic beep   |
 | “Wave hello!”            | Plays a friendly wave beep emote          |
 | “Look at the red ball”   | Turns head toward object, plays beep      |
-
----
-
-## 📦 Example `requirements.txt`
-
-```txt
-torch
-transformers
-opencv-python
-numpy
-sounddevice
-vosk
-aiofiles
-```
 
 ---
 
@@ -126,21 +114,18 @@ aiofiles
 
 ---
 
-## 🤖 Requirements
+## Requirements
 
 - Python 3.9+
 - Radxa Zero 3W (8GB RAM recommended)
 - Arducam camera
 - Microphone + speaker
 - Emote sound effects (WAV files)
+- UV
 
 ---
 
-## 🧩 Credits & Inspiration
-
-Built for the Duck Droid project using:
+## Models
 - Hugging Face [Moondream](https://huggingface.co/spaces/huggingface/Moondream)
 - [YOLOv8](https://github.com/ultralytics/ultralytics)
 - [Vosk Speech Recognition](https://alphacephei.com/vosk/)
-
-Let’s make Duckie smart, autonomous, and adorably beep-filled. 🦆✨
