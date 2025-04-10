@@ -1,0 +1,7 @@
+torch
+transformers
+opencv-python
+numpy
+sounddevice
+vosk
+aiofiles

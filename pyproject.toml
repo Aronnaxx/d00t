@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "duck_vla"
+version = "0.1.0"
+description = "Vision-Language-Action Control System for a duck droid"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Duck VLA Team"}
+]
+dependencies = [
+    "torch",
+    "transformers",
+    "opencv-python",
+    "numpy",
+    "sounddevice",
+    "vosk",
+    "aiofiles",
+]
+
+[project.scripts]
+duck-vla = "duck_vla.run_duck:main"
+
+[tool.uv]
+python = "3.9"
+editable-dependencies = true
