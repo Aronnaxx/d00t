@@ -267,12 +267,77 @@ def run_cli_mode(vision_model="moondream", no_camera=False, no_audio=False, debu
     workspace_dir = Path(__file__).parent.absolute()
     playground_path = workspace_dir / "submodules" / "open_duck_playground"
     
-    # Set up environment
+    if not playground_path.exists():
+        logger.error(f"Playground directory not found at {playground_path}")
+        return 1
+    
+    # Find an ONNX model first
+    onnx_model_path = find_onnx_model()
+    if not onnx_model_path:
+        logger.error("No ONNX model found. Please place one in duck_vla/onnx directory")
+        return 1
+    
+    logger.info(f"Using ONNX model: {onnx_model_path}")
+    
+    # Start MuJoCo visualization in background first
+    logger.info("Starting MuJoCo visualization in background...")
+    try:
+        # Save current directory to restore it later
+        original_dir = os.getcwd()
+        
+        # Change to playground directory
+        os.chdir(playground_path)
+        
+        # Build command for MuJoCo visualization
+        mujoco_cmd = [
+            "uv", 
+            "run", 
+            "playground/open_duck_mini_v2/mujoco_infer.py",
+            "-o", 
+            onnx_model_path
+        ]
+        
+        if debug:
+            mujoco_cmd.append("--verbose")
+        
+        logger.info(f"Running MuJoCo command: {' '.join(mujoco_cmd)}")
+        
+        # Start MuJoCo process in background
+        mujoco_process = subprocess.Popen(
+            mujoco_cmd,
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE
+        )
+        
+        # Give MuJoCo time to start
+        logger.info("Waiting for MuJoCo to initialize...")
+        time.sleep(2)
+        
+        # Change back to original directory
+        os.chdir(original_dir)
+        
+        # Check if MuJoCo process is still running
+        if mujoco_process.poll() is not None:
+            returncode = mujoco_process.poll()
+            stdout, stderr = mujoco_process.communicate()
+            logger.error(f"MuJoCo process failed with code {returncode}")
+            logger.error(f"Stdout: {stdout.decode('utf-8')}")
+            logger.error(f"Stderr: {stderr.decode('utf-8')}")
+            return 1
+            
+        logger.info("MuJoCo visualization started successfully")
+        
+    except Exception as e:
+        logger.error(f"Failed to start MuJoCo visualization: {e}")
+        return 1
+    
+    # Set up environment for CLI control
     env = os.environ.copy()
     env["PYTHONPATH"] = f"{playground_path}:{env.get('PYTHONPATH', '')}"
     env["DUCK_VISION_MODEL"] = vision_model
+    env["DUCK_ONNX_MODEL"] = os.path.abspath(onnx_model_path)
     
-    # Build command
+    # Build command for CLI control
     cmd = ["uv", "run", "-m", "duck_vla.run_duck", "--simulate"]
     
     if no_camera:
@@ -286,13 +351,24 @@ def run_cli_mode(vision_model="moondream", no_camera=False, no_audio=False, debu
     
     try:
         process = subprocess.run(cmd, env=env, check=True)
-        return process.returncode
+        return_code = process.returncode
     except subprocess.CalledProcessError as e:
         logger.error(f"Command failed with exit code {e.returncode}")
-        return e.returncode
+        return_code = e.returncode
     except KeyboardInterrupt:
         logger.info("Received keyboard interrupt, terminating...")
-        return 0
+        return_code = 0
+    finally:
+        # Terminate MuJoCo process when CLI is closed
+        logger.info("Terminating MuJoCo visualization process...")
+        try:
+            if 'mujoco_process' in locals() and mujoco_process.poll() is None:
+                mujoco_process.terminate()
+                mujoco_process.wait(timeout=5)
+        except Exception as e:
+            logger.error(f"Error terminating MuJoCo process: {e}")
+    
+    return return_code
 
 def run_playground_directly(debug=False):
     """Run the Open Duck Playground directly."""
