@@ -7,6 +7,7 @@ vision, language, and action components to create autonomous behavior.
 
 import logging
 import time
+import os
 from typing import Dict, Optional, Any
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,8 @@ class DecisionLoop:
         audio_enabled: bool = True,
         camera_enabled: bool = True,
         cli_enabled: bool = True,
+        vision_model: Optional[str] = None,
+        onnx_model_path: Optional[str] = None,
     ):
         """
         Initialize the decision loop.
@@ -37,16 +40,27 @@ class DecisionLoop:
             audio_enabled: Whether to enable audio input/output
             camera_enabled: Whether to enable camera input
             cli_enabled: Whether to enable CLI for direct command input
+            vision_model: Vision model name to use (default from env or 'moondream')
+            onnx_model_path: Path to ONNX model for simulation (default from env or None)
         """
         self.simulate = simulate
         self.audio_enabled = audio_enabled
         self.camera_enabled = camera_enabled
         self.cli_enabled = cli_enabled
         
+        # Get vision model from environment or parameter
+        self.vision_model = vision_model or os.environ.get("DUCK_VISION_MODEL", "moondream")
+        
+        # Get ONNX model path from environment or parameter
+        self.onnx_model_path = onnx_model_path or os.environ.get("DUCK_ONNX_MODEL", None)
+        
         self.running = False
         self.current_state = {"status": "initializing"}
         
         logger.debug("Setting up component imports...")
+        logger.info(f"Using vision model: {self.vision_model}")
+        if self.onnx_model_path:
+            logger.info(f"Using ONNX model: {self.onnx_model_path}")
         
         # Import components conditionally based on configuration
         if camera_enabled:
@@ -56,10 +70,10 @@ class DecisionLoop:
                 
                 logger.debug("Initializing camera and vision modules")
                 self.camera = ArduCamCapture()
-                # Use Ollama backend with moondream model
+                # Use Ollama backend with specified model
                 self.vision = MoondreamVision(
                     backend="ollama",
-                    model_id="moondream"
+                    model_id=self.vision_model
                 )
             except ImportError as e:
                 logger.warning(f"Failed to initialize camera/vision modules: {e}")
@@ -110,14 +124,16 @@ class DecisionLoop:
             if self.simulate:
                 logger.info("Using simulation-based movement")
                 # Import simulation-specific modules here
-                from duck_vla.action.motion_controller import SimulatedMotionController as MotionController
+                from duck_vla.action.motion_controller import SimulatedMotionController
+                
+                # Create with ONNX model path if specified
+                self.motion = SimulatedMotionController(onnx_model_path=self.onnx_model_path)
             else:
                 logger.info("Using real hardware movement")
                 from duck_vla.action.motion_controller import MotionController
+                self.motion = MotionController()
                 
             from duck_vla.action.emotes import EmoteController
-            
-            self.motion = MotionController()
             self.emotes = EmoteController(audio_enabled=audio_enabled)
             
         except ImportError as e:

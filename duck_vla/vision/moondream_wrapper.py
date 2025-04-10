@@ -131,24 +131,18 @@ class MoondreamVision:
         logger.info(f"Initializing Ollama client for model '{self.model_id}'" + (f" at host {self.ollama_host}" if self.ollama_host else ""))
         try:
             self.ollama_client = ollama.Client(host=self.ollama_host)
-            # Check connection and if model exists
-            self.ollama_client.list() # Simple connection test
-            logger.debug(f"Checking if Ollama model '{self.model_id}' is available locally...")
-            available_models = [m['name'] for m in self.ollama_client.list()['models']]
-            model_name_only = self.model_id.split(':')[0] # Handle tags like 'moondream:latest'
-            if not any(model_name_only in m for m in available_models):
-                 logger.warning(f"Ollama model '{self.model_id}' not found locally. Attempting to pull.")
-                 try:
-                     self._pull_ollama_model(self.model_id)
-                 except Exception as pull_error:
-                     logger.error(f"Failed to automatically pull Ollama model '{self.model_id}': {pull_error}")
-                     logger.error(f"Please ensure the model is available using `ollama pull {self.model_id}`.")
-                     # raise RuntimeError(f"Ollama model '{self.model_id}' not available and failed to pull.") # Decide if this should be fatal
-
-            logger.info(f"Ollama client initialized successfully for model '{self.model_id}'.")
+            
+            # Check connection - just make a basic API call
+            logger.debug("Testing Ollama connection...")
+            self.ollama_client.list()
+            logger.debug("Ollama connection successful")
+            
+            # No need to check if model exists - just use it directly
+            # Ollama will handle model loading when we make API calls
+            logger.info(f"Ollama client initialized successfully for model '{self.model_id}'")
 
         except Exception as e:
-            logger.exception(f"Failed to initialize Ollama client or verify model: {e}")
+            logger.exception(f"Failed to initialize Ollama client: {e}")
             raise RuntimeError(f"Failed to initialize Ollama: {e}")
 
     def _pull_ollama_model(self, model_name: str):
@@ -248,31 +242,36 @@ class MoondreamVision:
             import cv2
             _, img_encoded = cv2.imencode('.png', frame)
             image_bytes = img_encoded.tobytes()
-
+            
             # Get basic caption
             caption = self._generate_caption_ollama(image_bytes)
-
+            
             # Check if we see a person
             contains_person = self._check_for_person_ollama(image_bytes, caption)
-
-            # Get basic scene understanding (optional, can be slow)
-            # scene_info = self._analyze_scene_ollama(image_bytes)
-            scene_info = {"status": "Scene analysis not implemented for Ollama yet"}
-
-
+            
+            # Get basic scene understanding
+            scene_info = self._analyze_scene_ollama(image_bytes)
+            
             results = {
                 "caption": caption,
                 "person_detected": contains_person,
                 "scene": scene_info,
-                 "backend": "ollama"
+                "backend": "ollama"
             }
-
+            
             logger.debug(f"Ollama frame processing complete: {results}")
             return results
-
+            
         except Exception as e:
             logger.exception(f"Error processing frame with Ollama: {e}")
-            return {"error": str(e), "backend": "ollama"}
+            # Return minimal error response but don't crash
+            return {
+                "error": str(e),
+                "caption": "Error processing image",
+                "person_detected": False,
+                "scene": {"error": str(e)},
+                "backend": "ollama"
+            }
 
 
     def _generate_caption_huggingface(self, image: 'Image.Image') -> str:

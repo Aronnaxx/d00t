@@ -1,0 +1,462 @@
+#!/usr/bin/env python
+"""
+Duck VLA Unified Runner (DOOT)
+
+This script consolidates all Duck VLA simulation functionality into a single command.
+It focuses on MuJoCo inference simulation with options for various configurations.
+
+Usage:
+    uv run doot.py [options]
+"""
+
+import os
+import sys
+import subprocess
+import logging
+import argparse
+from pathlib import Path
+import json
+import time
+import glob
+
+# Configure detailed logging for easier debugging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger("duck_vla_runner")
+
+def parse_arguments():
+    """Parse command line arguments with all available options."""
+    parser = argparse.ArgumentParser(
+        description="Duck VLA Unified Runner (DOOT) - Simplified simulation system"
+    )
+    
+    # Main mode options
+    mode_group = parser.add_argument_group("Simulation Mode")
+    mode_group.add_argument(
+        "--cli-mode", 
+        action="store_true", 
+        help="Run with CLI control instead of ONNX model"
+    )
+    mode_group.add_argument(
+        "--playground-only", 
+        action="store_true", 
+        help="Run the Open Duck Playground directly without Duck VLA"
+    )
+    
+    # Input/output options
+    io_group = parser.add_argument_group("Input/Output Options")
+    io_group.add_argument(
+        "--no-audio", 
+        action="store_true", 
+        help="Disable audio input/output"
+    )
+    io_group.add_argument(
+        "--no-camera", 
+        action="store_true", 
+        help="Disable camera input"
+    )
+    
+    # Model options
+    model_group = parser.add_argument_group("Model Options")
+    model_group.add_argument(
+        "--vision-model",
+        type=str,
+        default="moondream",
+        help="Vision model to use (default: moondream)"
+    )
+    model_group.add_argument(
+        "--onnx-model",
+        type=str,
+        help="Path to specific ONNX model file (will auto-detect if not specified)"
+    )
+    
+    # Environment setup
+    setup_group = parser.add_argument_group("Environment Setup")
+    setup_group.add_argument(
+        "--setup", 
+        action="store_true", 
+        help="Run setup to ensure environment is ready"
+    )
+    setup_group.add_argument(
+        "--test-imports", 
+        action="store_true", 
+        help="Test if playground imports work correctly"
+    )
+    
+    # Other options
+    parser.add_argument(
+        "--debug", 
+        action="store_true", 
+        help="Enable debug logging"
+    )
+    
+    return parser.parse_args()
+
+def find_onnx_model():
+    """
+    Find an ONNX model in the expected locations.
+    Returns path to the first valid ONNX model found.
+    """
+    logger.debug("Searching for ONNX model...")
+    
+    # Get workspace directory
+    workspace_dir = Path(__file__).parent.absolute()
+    
+    # Check duck_vla/onnx directory first (preferred location)
+    onnx_dir = workspace_dir / "duck_vla" / "onnx"
+    if onnx_dir.exists() and onnx_dir.is_dir():
+        onnx_files = list(onnx_dir.glob("*.onnx"))
+        if onnx_files:
+            model_path = str(onnx_files[0])
+            logger.info(f"Found ONNX model in duck_vla/onnx: {onnx_files[0].name}")
+            return model_path
+    
+    # Check root directory
+    root_onnx_files = list(workspace_dir.glob("*.onnx"))
+    if root_onnx_files:
+        model_path = str(root_onnx_files[0])
+        logger.info(f"Found ONNX model in root directory: {root_onnx_files[0].name}")
+        return model_path
+    
+    # Check for specific named models in various locations
+    model_names = ["BEST_WALK_ONNX_2.onnx", "policy_1.onnx", "duck_model.onnx"]
+    for name in model_names:
+        for search_dir in [workspace_dir, workspace_dir / "models", workspace_dir / "duck_vla"]:
+            path = search_dir / name
+            if path.exists():
+                logger.info(f"Found ONNX model: {path}")
+                return str(path)
+    
+    logger.warning("No ONNX model found in any of the expected locations")
+    return None
+
+def setup_ollama_model(model_name="moondream", debug=False):
+    """Set up the specified Ollama model."""
+    logger.info(f"Setting up Ollama model: {model_name}")
+    
+    try:
+        import ollama
+        client = ollama.Client()
+        
+        # Check if model exists
+        models = client.list()
+        model_exists = False
+        model_base = model_name.split(':')[0]
+        
+        if "models" in models:
+            for model in models["models"]:
+                if "name" in model and model_base in model["name"]:
+                    logger.info(f"Ollama model '{model_name}' already exists")
+                    model_exists = True
+                    break
+        
+        # Pull model if needed
+        if not model_exists:
+            logger.info(f"Pulling Ollama model '{model_name}'...")
+            client.pull(model_name)
+            logger.info(f"Successfully pulled model '{model_name}'")
+        
+        return True
+        
+    except ImportError:
+        logger.error("Ollama Python package not found. Installing...")
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "ollama"])
+            logger.info("Ollama package installed. Please run again.")
+        except Exception as e:
+            logger.error(f"Failed to install Ollama package: {e}")
+        return False
+        
+    except Exception as e:
+        logger.error(f"Error setting up Ollama model: {e}")
+        logger.error("Ensure Ollama server is running with 'ollama serve'")
+        return False
+
+def check_environment():
+    """Check if the environment is set up properly."""
+    logger.info("Checking environment...")
+    
+    # Check if playground submodule exists
+    workspace_dir = Path(__file__).parent.absolute()
+    playground_path = workspace_dir / "submodules" / "open_duck_playground"
+    
+    if not playground_path.exists():
+        logger.error(f"Open Duck Playground not found at {playground_path}")
+        logger.error("Please run ./setup_duck_vla.sh to set up the environment")
+        return False
+    
+    logger.info("Environment check passed")
+    return True
+
+def test_playground_imports():
+    """Test if playground imports work correctly."""
+    logger.info("Testing playground imports...")
+    
+    workspace_dir = Path(__file__).parent.absolute()
+    playground_path = workspace_dir / "submodules" / "open_duck_playground"
+    
+    if not playground_path.exists():
+        logger.error(f"Playground directory not found at {playground_path}")
+        return False
+    
+    # Add playground to path temporarily for testing
+    sys.path.insert(0, str(playground_path))
+    
+    try:
+        import playground
+        import playground.open_duck_mini_v2
+        import playground.open_duck_mini_v2.joystick
+        
+        logger.info("Successfully imported playground modules")
+        return True
+        
+    except ImportError as e:
+        logger.error(f"Import error: {e}")
+        return False
+    finally:
+        # Remove from path
+        if str(playground_path) in sys.path:
+            sys.path.remove(str(playground_path))
+
+def run_mujoco_simulation(onnx_model_path, debug=False):
+    """Run the MuJoCo simulation with the specified ONNX model."""
+    logger.info("Running MuJoCo simulation...")
+    
+    workspace_dir = Path(__file__).parent.absolute()
+    playground_path = workspace_dir / "submodules" / "open_duck_playground"
+    
+    if not playground_path.exists():
+        logger.error(f"Playground directory not found at {playground_path}")
+        return 1
+    
+    # Change to playground directory
+    os.chdir(playground_path)
+    logger.debug(f"Changed directory to: {playground_path}")
+    
+    # Build command
+    cmd = [
+        "uv", 
+        "run", 
+        "playground/open_duck_mini_v2/mujoco_infer.py",
+        "-o", 
+        onnx_model_path
+    ]
+    
+    if debug:
+        cmd.append("--verbose")
+    
+    logger.info(f"Running command: {' '.join(cmd)}")
+    
+    try:
+        process = subprocess.run(cmd, check=True)
+        return process.returncode
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Command failed with exit code {e.returncode}")
+        return e.returncode
+    except KeyboardInterrupt:
+        logger.info("Received keyboard interrupt, terminating...")
+        return 0
+
+def run_cli_mode(vision_model="moondream", no_camera=False, no_audio=False, debug=False):
+    """Run Duck VLA with CLI control."""
+    logger.info("Running Duck VLA with CLI control...")
+    
+    workspace_dir = Path(__file__).parent.absolute()
+    playground_path = workspace_dir / "submodules" / "open_duck_playground"
+    
+    # Set up environment
+    env = os.environ.copy()
+    env["PYTHONPATH"] = f"{playground_path}:{env.get('PYTHONPATH', '')}"
+    env["DUCK_VISION_MODEL"] = vision_model
+    
+    # Build command
+    cmd = ["uv", "run", "-m", "duck_vla.run_duck", "--simulate"]
+    
+    if no_camera:
+        cmd.append("--no-camera")
+    if no_audio:
+        cmd.append("--no-audio")
+    if debug:
+        cmd.append("--debug")
+    
+    logger.info(f"Running command: {' '.join(cmd)}")
+    
+    try:
+        process = subprocess.run(cmd, env=env, check=True)
+        return process.returncode
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Command failed with exit code {e.returncode}")
+        return e.returncode
+    except KeyboardInterrupt:
+        logger.info("Received keyboard interrupt, terminating...")
+        return 0
+
+def run_playground_directly(debug=False):
+    """Run the Open Duck Playground directly."""
+    logger.info("Running Open Duck Playground directly...")
+    
+    workspace_dir = Path(__file__).parent.absolute()
+    playground_path = workspace_dir / "submodules" / "open_duck_playground"
+    
+    if not playground_path.exists():
+        logger.error(f"Playground directory not found at {playground_path}")
+        return 1
+    
+    # Change directory to playground
+    os.chdir(playground_path)
+    
+    # Build command
+    cmd = ["uv", "run", "playground/open_duck_mini_v2/runner.py"]
+    
+    logger.info(f"Running command: {' '.join(cmd)}")
+    
+    try:
+        process = subprocess.run(cmd, check=True)
+        return process.returncode
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Command failed with exit code {e.returncode}")
+        return e.returncode
+    except KeyboardInterrupt:
+        logger.info("Received keyboard interrupt, terminating...")
+        return 0
+
+def setup_environment(debug=False):
+    """Set up the Duck VLA environment."""
+    logger.info("Setting up Duck VLA environment...")
+    
+    workspace_dir = Path(__file__).parent.absolute()
+    
+    # Create onnx directory if it doesn't exist
+    onnx_dir = workspace_dir / "duck_vla" / "onnx"
+    onnx_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create README if it doesn't exist
+    readme_path = onnx_dir / "README.md"
+    if not readme_path.exists():
+        with open(readme_path, "w") as f:
+            f.write("""# ONNX Models Directory
+
+Place your ONNX model files (.onnx) in this directory. 
+The Duck VLA system will use the first .onnx file it finds in this directory.
+
+You can download pre-trained models from the Open Duck GitHub repository.
+""")
+    
+    # Check if submodules directory exists
+    submodules_dir = workspace_dir / "submodules"
+    if not submodules_dir.exists():
+        submodules_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Check for open_duck_playground
+    playground_path = submodules_dir / "open_duck_playground"
+    if not playground_path.exists():
+        logger.info("Cloning open_duck_playground repository...")
+        try:
+            subprocess.run(
+                ["git", "clone", "https://github.com/open-duck/open-duck-playground.git", str(playground_path)],
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to clone repository: {e}")
+            logger.error("Please manually download from https://github.com/open-duck/open-duck-playground")
+            return False
+    
+    # Install required packages
+    logger.info("Installing required packages...")
+    try:
+        subprocess.run(
+            ["uv", "pip", "install", "-U", "ollama", "transformers", "torch", "numpy", "pillow", "opencv-python"],
+            check=True
+        )
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to install required packages: {e}")
+        return False
+    
+    # Install open_duck_playground
+    logger.info("Installing open_duck_playground...")
+    try:
+        subprocess.run(
+            ["uv", "pip", "install", "-e", "."],
+            cwd=playground_path,
+            check=True
+        )
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to install open_duck_playground: {e}")
+        return False
+    
+    logger.info("Environment setup completed successfully")
+    return True
+
+def main():
+    """Main entry point for Duck VLA unified runner."""
+    args = parse_arguments()
+    
+    # Set debug logging if requested
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+        logger.debug("Debug logging enabled")
+        # Log all arguments
+        logger.debug(f"Command line arguments: {json.dumps(vars(args), indent=2)}")
+    
+    # Run setup if requested
+    if args.setup:
+        if not setup_environment(debug=args.debug):
+            return 1
+    
+    # Test imports if requested
+    if args.test_imports:
+        if not test_playground_imports():
+            logger.error("Playground imports test failed")
+            return 1
+        logger.info("Playground imports test passed")
+        if not args.playground_only and not args.cli_mode:
+            # If only testing imports, exit now
+            return 0
+    
+    # Check environment
+    if not check_environment():
+        logger.error("Environment check failed. Run with --setup to set up the environment.")
+        return 1
+    
+    # Set up Ollama model if needed
+    if not args.playground_only:
+        if not setup_ollama_model(args.vision_model, args.debug):
+            logger.error(f"Failed to set up Ollama model: {args.vision_model}")
+            return 1
+    
+    # Determine which mode to run
+    if args.playground_only:
+        # Run Open Duck Playground directly
+        return run_playground_directly(debug=args.debug)
+    
+    elif args.cli_mode:
+        # Run Duck VLA with CLI control
+        return run_cli_mode(
+            vision_model=args.vision_model,
+            no_camera=args.no_camera,
+            no_audio=args.no_audio,
+            debug=args.debug
+        )
+    
+    else:
+        # Default: Run MuJoCo simulation with ONNX model
+        onnx_model_path = args.onnx_model
+        if not onnx_model_path:
+            onnx_model_path = find_onnx_model()
+            if not onnx_model_path:
+                logger.error("No ONNX model found. Please provide one with --onnx-model")
+                logger.error("or place a model in duck_vla/onnx directory")
+                return 1
+        
+        # Run MuJoCo simulation with ONNX model
+        return run_mujoco_simulation(onnx_model_path, debug=args.debug)
+
+if __name__ == "__main__":
+    start_time = time.time()
+    exit_code = main()
+    elapsed_time = time.time() - start_time
+    logger.info(f"Execution completed in {elapsed_time:.2f} seconds with exit code {exit_code}")
+    sys.exit(exit_code) 

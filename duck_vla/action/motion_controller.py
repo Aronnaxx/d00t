@@ -7,6 +7,7 @@ high-level commands into joystick-like movement controls.
 
 import logging
 import time
+import os
 from typing import Dict, Any, Optional, List, Tuple
 
 logger = logging.getLogger(__name__)
@@ -19,15 +20,23 @@ class MotionController:
     provides higher-level movement commands.
     """
     
-    def __init__(self, simulate: bool = False):
+    def __init__(self, simulate: bool = False, onnx_model_path: Optional[str] = None):
         """
         Initialize the motion controller.
         
         Args:
             simulate: Whether to use simulation mode
+            onnx_model_path: Path to the ONNX model for simulation (if None, will use environment variable)
         """
         self.simulate = simulate
-        logger.info(f"Initializing motion controller (simulate={simulate})")
+        
+        # If no model path provided, check environment variable
+        if onnx_model_path is None and "DUCK_ONNX_MODEL" in os.environ:
+            onnx_model_path = os.environ.get("DUCK_ONNX_MODEL")
+            logger.debug(f"Using ONNX model from environment: {onnx_model_path}")
+        
+        self.onnx_model_path = onnx_model_path
+        logger.info(f"Initializing motion controller (simulate={simulate}, model={onnx_model_path or 'default'})")
         
         # Movement state tracking
         self.current_speed = 0.0
@@ -58,9 +67,19 @@ class MotionController:
             # Import our JoystickInterface wrapper
             from duck_vla.action.joystick_interface import JoystickInterface
             
+            logger.debug("Creating joystick interface")
             # Create joystick interface with simulation flag
             self.joystick = JoystickInterface(simulate=self.simulate)
             logger.info(f"Initialized joystick interface (simulate={self.simulate})")
+            
+            # If we're in simulation mode, start the MuJoCo thread
+            if self.simulate:
+                logger.debug(f"Starting MuJoCo thread with model: {self.onnx_model_path}")
+                success = self.joystick.start_mujoco_thread(self.onnx_model_path)
+                if success:
+                    logger.info("Started MuJoCo simulation thread")
+                else:
+                    logger.warning("Failed to start MuJoCo simulation thread")
             
         except Exception as e:
             logger.exception(f"Error initializing joystick interface: {e}")
@@ -143,6 +162,7 @@ class MotionController:
             self.last_command_time = time.time()
             self.command_count += 1
             
+            logger.debug(f"Setting joystick params: x_vel={x_vel:.2f}, y_vel={y_vel:.2f}, yaw_vel={yaw_vel:.2f}")
             # Execute movement through joystick interface
             success = self.joystick.set_walking_params(x_vel, y_vel, yaw_vel)
             
@@ -151,6 +171,7 @@ class MotionController:
                 # In a more complex implementation, you might use a timer thread
                 # For this example, we'll simulate by sleeping and then stopping
                 if not self.simulate:  # Only sleep in real mode
+                    logger.debug(f"Sleeping for {duration:.2f}s before stopping")
                     time.sleep(duration)
                     self.stop()
             
@@ -202,6 +223,7 @@ class MotionController:
             self.last_command_time = time.time()
             self.command_count += 1
             
+            logger.debug(f"Setting joystick params: x_vel={x_vel:.2f}, y_vel={y_vel:.2f}, yaw_vel={yaw_vel:.2f}")
             # Execute turn through joystick interface
             success = self.joystick.set_walking_params(x_vel, y_vel, yaw_vel)
             
@@ -215,6 +237,7 @@ class MotionController:
                 logger.debug(f"Turn time for {angle:.1f}° at rate {abs(yaw_vel):.2f}: {turn_time:.2f}s")
                 
                 if not self.simulate:  # Only sleep in real mode
+                    logger.debug(f"Sleeping for {turn_time:.2f}s before stopping")
                     time.sleep(turn_time)
                     self.stop()
             
@@ -246,28 +269,39 @@ class MotionController:
                 if target == "person":
                     # Look straight ahead and slightly up
                     yaw, pitch, roll = 0.0, 10.0, 0.0
+                    logger.debug(f"Target 'person' mapped to yaw={yaw:.1f}, pitch={pitch:.1f}, roll={roll:.1f}")
                 elif target == "up":
                     yaw, pitch, roll = 0.0, 30.0, 0.0
+                    logger.debug(f"Target 'up' mapped to yaw={yaw:.1f}, pitch={pitch:.1f}, roll={roll:.1f}")
                 elif target == "down":
                     yaw, pitch, roll = 0.0, -30.0, 0.0
+                    logger.debug(f"Target 'down' mapped to yaw={yaw:.1f}, pitch={pitch:.1f}, roll={roll:.1f}")
                 elif target == "left":
                     yaw, pitch, roll = -45.0, 0.0, 0.0
+                    logger.debug(f"Target 'left' mapped to yaw={yaw:.1f}, pitch={pitch:.1f}, roll={roll:.1f}")
                 elif target == "right":
                     yaw, pitch, roll = 45.0, 0.0, 0.0
+                    logger.debug(f"Target 'right' mapped to yaw={yaw:.1f}, pitch={pitch:.1f}, roll={roll:.1f}")
                 else:
                     logger.warning(f"Unknown look target: {target}")
                     return False
             
             # Clamp angles to limits
+            original_yaw, original_pitch, original_roll = yaw, pitch, roll
             yaw = max(self.head_limits["yaw"][0], min(yaw, self.head_limits["yaw"][1]))
             pitch = max(self.head_limits["pitch"][0], min(pitch, self.head_limits["pitch"][1]))
             roll = max(self.head_limits["roll"][0], min(roll, self.head_limits["roll"][1]))
+            
+            # Log if any angles were clamped
+            if original_yaw != yaw or original_pitch != pitch or original_roll != roll:
+                logger.debug(f"Angles clamped from ({original_yaw:.1f}, {original_pitch:.1f}, {original_roll:.1f}) to ({yaw:.1f}, {pitch:.1f}, {roll:.1f})")
             
             # Update state
             self.current_head_position = {"yaw": yaw, "pitch": pitch, "roll": roll}
             self.last_command_time = time.time()
             self.command_count += 1
             
+            logger.debug(f"Setting head position: yaw={yaw:.2f}, pitch={pitch:.2f}, roll={roll:.2f}")
             # Execute head movement through joystick interface
             success = self.joystick.set_head_position(yaw, pitch, roll)
             return success
@@ -293,6 +327,7 @@ class MotionController:
             self.last_command_time = time.time()
             self.command_count += 1
             
+            logger.debug("Setting joystick params to zero for all axes")
             # Stop movement through joystick interface
             success = self.joystick.set_walking_params(0.0, 0.0, 0.0)
             return success
@@ -308,7 +343,7 @@ class MotionController:
         Returns:
             Dict with status information
         """
-        return {
+        status = {
             "current_speed": self.current_speed,
             "current_turn_rate": self.current_turn_rate,
             "current_strafe_rate": self.current_strafe_rate,
@@ -316,6 +351,8 @@ class MotionController:
             "last_command_time": self.last_command_time,
             "command_count": self.command_count,
         }
+        logger.debug(f"Status: {status}")
+        return status
     
 
 class SimulatedMotionController(MotionController):
@@ -325,10 +362,14 @@ class SimulatedMotionController(MotionController):
     This extends the base MotionController to provide simulation-specific functionality.
     """
     
-    def __init__(self):
-        """Initialize the simulated motion controller."""
-        super().__init__(simulate=True)
-        logger.info("Using SimulatedMotionController")
+    def __init__(self, onnx_model_path: Optional[str] = None):
+        """Initialize the simulated motion controller.
+        
+        Args:
+            onnx_model_path: Path to the ONNX model for simulation (if None, will use environment variable)
+        """
+        super().__init__(simulate=True, onnx_model_path=onnx_model_path)
+        logger.info(f"Using SimulatedMotionController with model {onnx_model_path or 'from environment or default'}")
     
     def move(
         self, 

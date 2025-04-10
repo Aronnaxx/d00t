@@ -1,6 +1,6 @@
 #!/bin/bash
 # Duck VLA Setup Script
-# This script sets up the Duck VLA system with Ollama and open_duck_playground integration
+# This script sets up the Duck VLA system with open_duck_playground integration
 
 set -e  # Exit on error
 
@@ -67,14 +67,35 @@ cd "$SCRIPT_DIR"
 echo "Pulling moondream model in Ollama..."
 ollama pull moondream
 
+# Create onnx directory if it doesn't exist
+mkdir -p duck_vla/onnx
+if [ ! -f "duck_vla/onnx/README.md" ]; then
+    echo "Creating README for ONNX models directory..."
+    echo "# ONNX Models Directory
+
+Place your ONNX model files (.onnx) in this directory. 
+The Duck VLA system will use the first .onnx file it finds in this directory.
+
+You can download pre-trained models from the Open Duck GitHub repository.
+" > duck_vla/onnx/README.md
+fi
+
+# Display information about Ollama
+echo ""
+echo "Please ensure Ollama is installed and the models you wish to use are available."
+echo "You can install Ollama from: https://ollama.com/download"
+echo ""
+echo "For example, to install the moondream model for vision capabilities:"
+echo "    ollama pull moondream"
+echo ""
+
 # Display success message and usage instructions
 echo ""
 echo "Duck VLA setup complete!"
 echo ""
 echo "To run the Duck VLA system:"
 echo "  1. Activate the virtual environment: source .venv/bin/activate"
-echo "  2. Run with CLI control: uv run run_duck_sim.py"
-echo "  3. Run without CLI control: uv run run_duck_sim.py --no-cli"
+echo "  2. Run the simulation: uv run run_duck_sim.py"
 echo ""
 echo "For additional options:"
 echo "  uv run run_duck_sim.py --help"
