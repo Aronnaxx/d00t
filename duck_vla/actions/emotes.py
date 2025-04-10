@@ -58,7 +58,7 @@ class EmoteController:
         # Import audio utilities if enabled
         if audio_enabled:
             try:
-                from duck_vla.utils.audio import AudioSystem
+                from duck_vla.sounds.audio import AudioSystem
                 self.audio_system = AudioSystem()
                 logger.debug("Audio system initialized for emotes")
             except ImportError as e:

@@ -26,6 +26,7 @@ uv run doot.py --vision-model llava
 - **Auto-detection** - Automatically finds ONNX models in standard locations
 - **Enhanced logging** - Detailed debug logging to help troubleshoot issues
 - **Environment setup** - Built-in setup functionality
+- **VLM Movement Commands** - Support for Vision Language Model movement commands
 
 ## Command Line Options
 
@@ -81,6 +82,69 @@ graph TD
     C -.-> L
 ```
 
+## Movement Control System
+
+The Duck VLA system includes a comprehensive movement control system that supports both traditional joystick controls and Vision Language Model (VLM) movement commands.
+
+### Components
+
+1. **JoystickInterface** (`joystick_interface.py`)
+   - Provides a direct interface for controlling duck movement in MuJoCo simulation
+   - Supports both traditional joystick controls and VLM movement commands
+   - Handles command processing, parameter scaling, and head position control
+
+2. **MotionController** (`motion_controller.py`)
+   - High-level interface for controlling duck movement
+   - Translates movement commands into joystick inputs
+   - Supports both simulation and real-world environments
+   - Includes specialized `SimulatedMotionController` for enhanced debugging
+
+### VLM Movement Commands
+
+The system now supports the following VLM movement commands:
+
+- `forward` - Move forward
+- `backward` - Move backward
+- `left` - Strafe left
+- `right` - Strafe right
+- `turn_left` - Turn left
+- `turn_right` - Turn right
+- `stop` - Stop all movement
+
+Example usage:
+
+```python
+# Initialize the motion controller
+controller = MotionController(simulate=True)
+
+# Move forward using VLM command
+controller.move_vlm("forward", speed=0.5, duration=2.0)
+
+# Turn left using VLM command
+controller.move_vlm("turn_left", speed=0.3, duration=1.5)
+
+# Stop movement
+controller.move_vlm("stop")
+```
+
+### Movement Flow
+
+```mermaid
+sequenceDiagram
+    participant VLM as Vision Language Model
+    participant MC as MotionController
+    participant JI as JoystickInterface
+    participant MJ as MuJoCo Simulation
+    
+    VLM->>MC: move_vlm("forward", speed=0.5)
+    MC->>JI: set_vlm_movement("forward", 0.5)
+    JI->>JI: Process command
+    JI->>MJ: Apply movement parameters
+    MJ-->>JI: Update simulation
+    JI-->>MC: Return success
+    MC-->>VLM: Return success
+```
+
 ## Environment Setup
 
 The system requires:
@@ -88,12 +152,45 @@ The system requires:
 1. **Open Duck Playground** - Cloned automatically with `--setup`
 2. **Ollama** - For vision model support
 3. **ONNX model** - Place in `duck_vla/onnx/` directory
+4. **System dependencies** - Required for audio and camera
+
+### System Dependencies
+
+Before running, install these system dependencies:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install -y portaudio19-dev libv4l-dev python3-opencv
+
+# Fedora/RHEL
+sudo dnf install -y portaudio-devel libv4l-devel python3-opencv
+```
+
+> **IMPORTANT**: PortAudio (portaudio19-dev) is a system library that must be installed **before** installing Python packages like `pyaudio`. It cannot be installed through pip or uv.
+
+### Python Setup
 
 Run the setup command to prepare your environment:
 
 ```bash
+# Set up the Python environment
 uv run doot.py --setup
+
+# Or use our setup script which handles system dependencies
+./setup_system_deps.sh
 ```
+
+## Running Without Hardware
+
+If you don't have camera or microphone hardware, you can still run with VLM processing:
+
+```bash
+# Run with CLI mode and no hardware, but keep VLM processing
+uv run doot.py --cli-mode --vision-model gemma3
+```
+
+You can then interact with the system through the CLI interface without needing actual hardware.
 
 ## Troubleshooting
 
@@ -110,6 +207,20 @@ Common issues and solutions:
 3. **Vision model issues:**
    - Ensure Ollama is installed and running
    - Check that the model is available with `ollama list`
+
+4. **PortAudio library not found:**
+   - Install the portaudio development package with `sudo apt install portaudio19-dev`
+   - Reinstall related Python packages: `uv pip install --force-reinstall sounddevice pyaudio`
+
+5. **Camera not found or access error:**
+   - Check camera permissions: `ls -la /dev/video*`
+   - Add your user to the video group: `sudo usermod -a -G video $USER`
+   - Install required libraries: `sudo apt install libv4l-dev`
+
+6. **Movement command issues:**
+   - Check that the joystick interface is enabled
+   - Verify that the movement command is supported
+   - Check the debug logs for detailed error information
 
 ## License
 

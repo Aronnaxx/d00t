@@ -12,7 +12,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 try:
-    from duck_vla.utils.audio import AudioPlayer, AudioRecorder, find_beep_file
+    from duck_vla.sounds.audio import AudioPlayer, AudioRecorder, find_beep_file
     AUDIO_UTILS_AVAILABLE = True
 except ImportError as e:
     logging.warning(f"Could not import audio utils, audio tests will be skipped: {e}")

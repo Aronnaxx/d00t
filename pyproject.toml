@@ -5,7 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "d00t_vla"
 version = "0.1.0"
-description = "d00t VLA: Vision-Language-Action Control System for a Duck Droid"
+description = """
+d00t VLA: Vision-Language-Action Control System for a Duck Droid
+System dependencies: portaudio19-dev, libv4l-dev, python3-opencv
+"""
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT License"}
@@ -40,6 +43,7 @@ dependencies = [
     "pygame>=2.5",
     "tf2onnx>=1.16.1",
     "pytest>=7.0",
+    "pyaudio>=0.2.13",
 ]
 
 [project.optional-dependencies]

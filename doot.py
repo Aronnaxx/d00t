@@ -18,6 +18,7 @@ from pathlib import Path
 import json
 import time
 import glob
+import traceback
 
 # Configure detailed logging for easier debugging
 logging.basicConfig(
@@ -71,6 +72,11 @@ def parse_arguments():
         "--onnx-model",
         type=str,
         help="Path to specific ONNX model file (will auto-detect if not specified)"
+    )
+    model_group.add_argument(
+        "--verbose-vision", 
+        action="store_true", 
+        help="Enable verbose output for vision model interactions"
     )
     
     # Environment setup
@@ -245,9 +251,6 @@ def run_mujoco_simulation(onnx_model_path, debug=False):
         onnx_model_path
     ]
     
-    if debug:
-        cmd.append("--verbose")
-    
     logger.info(f"Running command: {' '.join(cmd)}")
     
     try:
@@ -260,7 +263,7 @@ def run_mujoco_simulation(onnx_model_path, debug=False):
         logger.info("Received keyboard interrupt, terminating...")
         return 0
 
-def run_cli_mode(vision_model="moondream", no_camera=False, no_audio=False, debug=False):
+def run_cli_mode(vision_model="moondream", no_camera=False, no_audio=False, debug=False, verbose_vision=False):
     """Run Duck VLA with CLI control."""
     logger.info("Running Duck VLA with CLI control...")
     
@@ -279,63 +282,90 @@ def run_cli_mode(vision_model="moondream", no_camera=False, no_audio=False, debu
     
     logger.info(f"Using ONNX model: {onnx_model_path}")
     
-    # Start MuJoCo visualization in background first
-    logger.info("Starting MuJoCo visualization in background...")
+    # Check if playground is already running
+    logger.info("Checking for existing playground simulation...")
+    # This is just a simple check - if needed, you can add more sophisticated detection
+    playground_running = False
     try:
-        # Save current directory to restore it later
-        original_dir = os.getcwd()
-        
-        # Change to playground directory
-        os.chdir(playground_path)
-        
-        # Build command for MuJoCo visualization
-        mujoco_cmd = [
-            "uv", 
-            "run", 
-            "playground/open_duck_mini_v2/mujoco_infer.py",
-            "-o", 
-            onnx_model_path
-        ]
-        
-        if debug:
-            mujoco_cmd.append("--verbose")
-        
-        logger.info(f"Running MuJoCo command: {' '.join(mujoco_cmd)}")
-        
-        # Start MuJoCo process in background
-        mujoco_process = subprocess.Popen(
-            mujoco_cmd,
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE
-        )
-        
-        # Give MuJoCo time to start
-        logger.info("Waiting for MuJoCo to initialize...")
-        time.sleep(2)
-        
-        # Change back to original directory
-        os.chdir(original_dir)
-        
-        # Check if MuJoCo process is still running
-        if mujoco_process.poll() is not None:
-            returncode = mujoco_process.poll()
-            stdout, stderr = mujoco_process.communicate()
-            logger.error(f"MuJoCo process failed with code {returncode}")
-            logger.error(f"Stdout: {stdout.decode('utf-8')}")
-            logger.error(f"Stderr: {stderr.decode('utf-8')}")
-            return 1
+        # A very simple check for now - this could be improved
+        import psutil
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            cmd = proc.info.get('cmdline', [])
+            if cmd and any('mujoco_infer.py' in arg for arg in cmd if arg):
+                logger.info(f"Found existing playground process: {proc.info['pid']}")
+                playground_running = True
+                break
+    except ImportError:
+        logger.warning("psutil not installed, can't check for existing processes")
+        # Assume playground is running since the user mentioned it
+        playground_running = True
+    
+    # Start MuJoCo visualization in background if not already running
+    mujoco_process = None
+    if not playground_running:
+        logger.info("Starting MuJoCo visualization in background...")
+        try:
+            # Save current directory to restore it later
+            original_dir = os.getcwd()
             
-        logger.info("MuJoCo visualization started successfully")
-        
-    except Exception as e:
-        logger.error(f"Failed to start MuJoCo visualization: {e}")
-        return 1
+            # Change to playground directory
+            os.chdir(playground_path)
+            
+            # Build command for MuJoCo visualization
+            mujoco_cmd = [
+                "uv", 
+                "run", 
+                "playground/open_duck_mini_v2/mujoco_infer.py",
+                "-o", 
+                onnx_model_path
+            ]
+            
+            logger.info(f"Running MuJoCo command: {' '.join(mujoco_cmd)}")
+            
+            # Start MuJoCo process in background
+            mujoco_process = subprocess.Popen(
+                mujoco_cmd,
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE
+            )
+            
+            # Give MuJoCo time to start
+            logger.info("Waiting for MuJoCo to initialize...")
+            time.sleep(2)
+            
+            # Change back to original directory
+            os.chdir(original_dir)
+            
+            # Check if MuJoCo process is still running
+            if mujoco_process.poll() is not None:
+                returncode = mujoco_process.poll()
+                stdout, stderr = mujoco_process.communicate()
+                logger.error(f"MuJoCo process failed with code {returncode}")
+                logger.error(f"Stdout: {stdout.decode('utf-8')}")
+                logger.error(f"Stderr: {stderr.decode('utf-8')}")
+                return 1
+                
+            logger.info("MuJoCo visualization started successfully")
+        except Exception as e:
+            logger.error(f"Failed to start MuJoCo visualization: {e}")
+            return 1
+    else:
+        logger.info("Using existing playground simulation - no need to start a new one")
     
     # Set up environment for CLI control
     env = os.environ.copy()
     env["PYTHONPATH"] = f"{playground_path}:{env.get('PYTHONPATH', '')}"
     env["DUCK_VISION_MODEL"] = vision_model
     env["DUCK_ONNX_MODEL"] = os.path.abspath(onnx_model_path)
+    env["DUCK_CONNECT_EXISTING"] = "1"  # Flag to connect to existing simulation
+    
+    # Configure verbose vision output if requested
+    if verbose_vision:
+        # Set environment variable for detailed vision output
+        env["DUCK_VERBOSE_VISION"] = "1"
+        # Ensure vision module logs are at debug level
+        env["DUCK_LOG_LEVEL"] = "DEBUG"
+        logger.info("Verbose vision output enabled")
     
     # Build command for CLI control
     cmd = ["uv", "run", "-m", "duck_vla.run_duck", "--simulate"]
@@ -359,14 +389,14 @@ def run_cli_mode(vision_model="moondream", no_camera=False, no_audio=False, debu
         logger.info("Received keyboard interrupt, terminating...")
         return_code = 0
     finally:
-        # Terminate MuJoCo process when CLI is closed
-        logger.info("Terminating MuJoCo visualization process...")
-        try:
-            if 'mujoco_process' in locals() and mujoco_process.poll() is None:
+        # Terminate MuJoCo process when CLI is closed if we started it
+        if mujoco_process and mujoco_process.poll() is None:
+            logger.info("Terminating MuJoCo visualization process...")
+            try:
                 mujoco_process.terminate()
                 mujoco_process.wait(timeout=5)
-        except Exception as e:
-            logger.error(f"Error terminating MuJoCo process: {e}")
+            except Exception as e:
+                logger.error(f"Error terminating MuJoCo process: {e}")
     
     return return_code
 
@@ -514,7 +544,8 @@ def main():
             vision_model=args.vision_model,
             no_camera=args.no_camera,
             no_audio=args.no_audio,
-            debug=args.debug
+            debug=args.debug,
+            verbose_vision=args.verbose_vision
         )
     
     else:
