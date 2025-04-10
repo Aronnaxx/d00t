@@ -1,26 +1,74 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=61.0", "wheel", "uv>=0.1.18"]
+build-backend = "setuptools.build_meta"
 
 [project]
-name = "duck_vla"
+name = "d00t_vla"
 version = "0.1.0"
-description = "Vision-Language-Action Control System for a duck droid"
+description = "d00t VLA: Vision-Language-Action Control System for a Duck Droid"
 readme = "README.md"
-requires-python = ">=3.9"
-license = {text = "MIT"}
+requires-python = ">=3.11"
+license = {text = "MIT License"}
 authors = [
-    {name = "Duck VLA Team"}
+    { name = "Your Name", email = "your.email@example.com" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "torch",
-    "transformers",
-    "opencv-python",
-    "numpy",
-    "sounddevice",
-    "vosk",
-    "aiofiles",
+    "numpy>=1.21",
+    "opencv-python>=4.5",
+    "Pillow>=9.0",
+    "torch>=1.10",
+    "transformers>=4.20",
+    "sounddevice>=0.4",
+    "soundfile>=0.11",
+    "vosk>=0.3.42",
+    "ollama>=0.1.7",
+    "requests",
+    "PyYAML",
+    "framesviewer>=1.0.2",
+    "jax>=0.4.23",
+    "jaxtyping>=0.2.25",
+    "matplotlib>=3.8",
+    "mediapy>=1.1.4",
+    "onnxruntime>=1.16",
+    "playground>=0.0.3",
+    "pygame>=2.5",
+    "tf2onnx>=1.16.1",
+    "pytest>=7.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "flake8",
+    "black",
+    "isort",
+    "mypy",
+]
+onnx-cpu = ["onnxruntime>=1.16"]
+onnx-cuda = ["onnxruntime-gpu>=1.16"]
+tensorflow = ["tensorflow>=2.15"]
+jax-cuda = ["jax[cuda12_pip]>=0.4.23"]
+
 [project.scripts]
-duck-vla = "duck_vla.run_duck:main"
+duck_vla = "duck_vla.run_duck:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["duck_vla*"]
+exclude = ["tests*", "submodules*"]
+
+[tool.uv]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "."
+]
+testpaths = [
+    "duck_vla/tests",
+]

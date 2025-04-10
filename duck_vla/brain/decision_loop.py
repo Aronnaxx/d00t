@@ -19,6 +19,7 @@ class DecisionLoop:
     - Camera input (vision)
     - Speech-to-text and intent parsing (language)
     - Movement and emote actions (action)
+    - CLI for direct command input (optional)
     """
     
     def __init__(
@@ -26,6 +27,7 @@ class DecisionLoop:
         simulate: bool = False,
         audio_enabled: bool = True,
         camera_enabled: bool = True,
+        cli_enabled: bool = True,
     ):
         """
         Initialize the decision loop.
@@ -34,10 +36,12 @@ class DecisionLoop:
             simulate: Whether to run in simulation mode using OpenDuckPlayground
             audio_enabled: Whether to enable audio input/output
             camera_enabled: Whether to enable camera input
+            cli_enabled: Whether to enable CLI for direct command input
         """
         self.simulate = simulate
         self.audio_enabled = audio_enabled
         self.camera_enabled = camera_enabled
+        self.cli_enabled = cli_enabled
         
         self.running = False
         self.current_state = {"status": "initializing"}
@@ -52,7 +56,11 @@ class DecisionLoop:
                 
                 logger.debug("Initializing camera and vision modules")
                 self.camera = ArduCamCapture()
-                self.vision = MoondreamVision()
+                # Use Ollama backend with moondream model
+                self.vision = MoondreamVision(
+                    backend="ollama",
+                    model_id="moondream"
+                )
             except ImportError as e:
                 logger.warning(f"Failed to initialize camera/vision modules: {e}")
                 self.camera = None
@@ -82,6 +90,20 @@ class DecisionLoop:
             self.stt = None
             self.intent_parser = None
             self.audio_system = None
+        
+        # Initialize CLI if enabled
+        if cli_enabled:
+            try:
+                from duck_vla.cli_controller import CLIController
+                
+                logger.debug("Initializing CLI controller")
+                self.cli = CLIController()
+            except ImportError as e:
+                logger.warning(f"Failed to initialize CLI controller: {e}")
+                self.cli = None
+        else:
+            logger.info("CLI disabled, skipping CLI controller initialization")
+            self.cli = None
             
         # Initialize action system
         try:
@@ -109,6 +131,11 @@ class DecisionLoop:
         logger.info("Starting decision loop")
         self.running = True
         
+        # Start CLI if enabled
+        if self.cli_enabled and self.cli:
+            logger.info("Starting CLI controller")
+            self.cli.start()
+        
         try:
             while self.running:
                 self._process_cycle()
@@ -129,9 +156,16 @@ class DecisionLoop:
         cycle_start_time = time.time()
         self.current_state["cycle_timestamp"] = cycle_start_time
         
-        # 1. Check for audio input if enabled
+        # 1. Check for CLI input if enabled
         command = None
-        if self.audio_enabled and self.stt:
+        if self.cli_enabled and self.cli:
+            cli_command = self.cli.get_command(timeout=0.01)
+            if cli_command:
+                logger.info(f"Received CLI command: {cli_command}")
+                command = cli_command
+        
+        # 2. Check for audio input if enabled and no CLI command
+        if command is None and self.audio_enabled and self.stt:
             logger.debug("Listening for commands")
             audio_input = self.stt.listen()
             if audio_input:
@@ -143,7 +177,7 @@ class DecisionLoop:
                         logger.debug(f"Parsed intent: {intent_data}")
                         command = intent_data
         
-        # 2. Capture image if camera is enabled
+        # 3. Capture image if camera is enabled
         frame = None
         vision_result = None
         if self.camera_enabled and self.camera:
@@ -155,10 +189,10 @@ class DecisionLoop:
                 vision_result = self.vision.process_frame(frame)
                 logger.debug(f"Vision result: {vision_result}")
         
-        # 3. Make decision based on inputs
+        # 4. Make decision based on inputs
         action = self._decide_action(command, vision_result)
         
-        # 4. Execute action
+        # 5. Execute action
         if action:
             logger.info(f"Executing action: {action}")
             self._execute_action(action)
@@ -176,7 +210,7 @@ class DecisionLoop:
         Determine what action to take based on current inputs.
         
         Args:
-            command: Parsed command intent from speech input
+            command: Parsed command intent from speech input or CLI
             vision_result: Results from vision processing
             
         Returns:
@@ -225,6 +259,11 @@ class DecisionLoop:
                 self.motion.look_at(**params)
             elif action_type == "emote":
                 self.emotes.play(params.get("emote", "neutral"))
+            elif action_type == "stop":
+                self.motion.stop()
+            elif action_type == "get_status":
+                status = self.motion.get_status() if self.motion else {"error": "Motion controller not available"}
+                logger.info(f"Duck status: {status}")
             else:
                 logger.warning(f"Unknown action type: {action_type}")
         except Exception as e:
@@ -233,6 +272,11 @@ class DecisionLoop:
     def _cleanup(self) -> None:
         """Clean up resources before shutting down."""
         logger.info("Cleaning up decision loop resources")
+        
+        # Clean up CLI if initialized
+        if hasattr(self, "cli") and self.cli:
+            logger.debug("Cleaning up CLI controller")
+            self.cli.stop()
         
         # Clean up camera if initialized
         if hasattr(self, "camera") and self.camera:

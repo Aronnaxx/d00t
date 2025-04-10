@@ -55,24 +55,12 @@ class MotionController:
     def _initialize_interface(self) -> None:
         """Initialize the appropriate joystick interface."""
         try:
-            if self.simulate:
-                # Import simulation interface
-                logger.debug("Importing simulation joystick interface")
-                from submodules.open_duck_playground.playground.open_duck_mini_v2.joystick import JoystickInterface
-                self.joystick = JoystickInterface()
-                logger.info("Initialized simulation joystick interface")
-            else:
-                # Import real hardware interface
-                # This would be the actual hardware interface for the duck
-                logger.debug("Importing hardware joystick interface")
-                try:
-                    # For now we'll use a mock implementation
-                    # In a real project, you'd import the actual hardware interface
-                    self.joystick = self._create_mock_joystick()
-                    logger.info("Initialized hardware joystick interface (mock)")
-                except ImportError:
-                    logger.warning("Hardware joystick interface not found, using mock")
-                    self.joystick = self._create_mock_joystick()
+            # Import our JoystickInterface wrapper
+            from duck_vla.action.joystick_interface import JoystickInterface
+            
+            # Create joystick interface with simulation flag
+            self.joystick = JoystickInterface(simulate=self.simulate)
+            logger.info(f"Initialized joystick interface (simulate={self.simulate})")
             
         except Exception as e:
             logger.exception(f"Error initializing joystick interface: {e}")
@@ -332,14 +320,77 @@ class MotionController:
 
 class SimulatedMotionController(MotionController):
     """
-    Simulation-specific motion controller that extends the base class.
+    Simulated motion controller for the duck.
     
-    This provides simulation-specific functionality for the OpenDuckPlayground.
+    This extends the base MotionController to provide simulation-specific functionality.
     """
     
     def __init__(self):
         """Initialize the simulated motion controller."""
         super().__init__(simulate=True)
-        logger.info("Using simulated motion controller")
+        logger.info("Using SimulatedMotionController")
+    
+    def move(
+        self, 
+        direction: str = "forward", 
+        speed: float = 0.5,
+        duration: Optional[float] = None
+    ) -> bool:
+        """
+        Move the duck in a simulated environment.
         
-        # Additional simulation-specific initialization can go here
+        Args:
+            direction: Movement direction ('forward', 'backward', 'left', 'right')
+            speed: Movement speed as fraction of maximum (0.0-1.0)
+            duration: Movement duration in seconds or None for continuous
+            
+        Returns:
+            Success flag
+        """
+        # Add debug logging for simulation
+        logger.debug(f"SIMULATION: Moving {direction} at speed {speed:.2f}" + 
+                    (f" for {duration:.2f}s" if duration else " continuously"))
+        
+        # Call the parent implementation
+        return super().move(direction, speed, duration)
+    
+    def turn(self, direction: str = "left", rate: float = 0.5, angle: Optional[float] = None) -> bool:
+        """
+        Turn the duck in a simulated environment.
+        
+        Args:
+            direction: Turn direction ('left', 'right', 'around')
+            rate: Turn rate as fraction of maximum (0.0-1.0)
+            angle: Turn angle in degrees or None for continuous
+            
+        Returns:
+            Success flag
+        """
+        # Add debug logging for simulation
+        angle_str = f" by {angle:.1f}°" if angle is not None else " continuously"
+        logger.debug(f"SIMULATION: Turning {direction} at rate {rate:.2f}{angle_str}")
+        
+        # Call the parent implementation
+        return super().turn(direction, rate, angle)
+    
+    def look_at(self, target: str = None, yaw: float = 0.0, pitch: float = 0.0, roll: float = 0.0) -> bool:
+        """
+        Point the duck's head in a simulated environment.
+        
+        Args:
+            target: Named target or None for direct angle control
+            yaw: Head yaw angle in degrees (-45 to 45)
+            pitch: Head pitch angle in degrees (-30 to 30)
+            roll: Head roll angle in degrees (-20 to 20)
+            
+        Returns:
+            Success flag
+        """
+        # Add debug logging for simulation
+        if target:
+            logger.debug(f"SIMULATION: Looking at target: {target}")
+        else:
+            logger.debug(f"SIMULATION: Setting head position: yaw={yaw:.2f}, pitch={pitch:.2f}, roll={roll:.2f}")
+        
+        # Call the parent implementation
+        return super().look_at(target, yaw, pitch, roll)

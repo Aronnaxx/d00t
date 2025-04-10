@@ -1,4 +1,3 @@
-
 #  d00t VLA: Vision-Language-Action Control System
 
 ![image](https://github.com/user-attachments/assets/66329a7f-48a8-433a-a3c7-a414d7a0de80)
@@ -50,6 +49,10 @@ duck_vla/
 │
 ├── models/                        # Store downloaded models (e.g. .onnx or .bin)
 │
+├── tests/                         # Test suite for the project
+│   ├── test_simulation.py         # Tests for simulation mode
+│   └── README.md                  # Documentation for running tests
+│
 ├── run_duck.py                    # Entrypoint script
 └── requirements.txt               # Python dependencies
 ```
@@ -60,7 +63,9 @@ duck_vla/
 
 1. **Install dependencies**:
    ```bash
-   pip install -r requirements.txt
+   pip install -e .
+   # Or with development dependencies
+   pip install -e ".[dev]"
    ```
 
 2. **Download models**:
@@ -70,12 +75,37 @@ duck_vla/
 
 3. **Test camera input**:
    ```bash
-   python camera/arducam_capture.py
+   python -m duck_vla.camera.arducam_capture
    ```
 
-4. **Run the duck decision loop**:
+4. **Run the duck**:
    ```bash
-   python run_duck.py
+   # Run on hardware
+   python -m duck_vla.run_duck
+   
+   # Run in simulation mode with proper Python path
+   uv run run_duck_sim.py
+   
+   # Run in simulation mode with debug logging
+   uv run run_duck_sim.py --debug
+   
+   # Run without audio/camera (for testing)
+   uv run run_duck_sim.py --no-audio --no-camera
+   
+   # Run the Open Duck Playground directly (MuJoCo visualization)
+   uv run run_playground.py
+   
+   # Run MuJoCo inference with a pre-trained ONNX model
+   uv run run_mujoco_duck.py
+   ```
+
+5. **Run tests**:
+   ```bash
+   # Run all tests
+   python -m pytest duck_vla/tests/
+   
+   # Run simulation tests
+   python -m pytest duck_vla/tests/test_simulation.py
    ```
 
 ---
@@ -91,20 +121,76 @@ duck_vla/
 
 ---
 
+## 🔄 Simulation Mode
+
+The project includes a simulation mode that uses the OpenDuckPlayground to test functionality without hardware:
+
+- Uses MuJoCo physics simulation for the duck's movement
+- Simulates camera input with test images or synthetic data
+- Allows testing of decision-making logic and movement
+- Helpful for development and testing without physical hardware
+
+To run in simulation mode:
+```bash
+# Running with proper Python path setup
+uv run run_duck_sim.py --debug
+
+# Running the Open Duck Playground directly (to see MuJoCo simulation)
+uv run run_playground.py
+
+# Running MuJoCo inference with a pre-trained model
+uv run run_mujoco_duck.py
+```
+
+The repository includes three helper scripts for running simulations:
+
+1. `run_duck_sim.py` - Runs the Duck VLA system in simulation mode with the proper Python path
+2. `run_playground.py` - Runs the Open Duck Playground directly, showing the MuJoCo visualization 
+3. `run_mujoco_duck.py` - Runs MuJoCo inference with a pre-trained ONNX model
+
+These scripts ensure the proper Python path is set up for accessing the `playground` module.
+
+---
+
 ## 🗣️ Example Behaviors
 
 | Command                  | Behavior                                  |
 |--------------------------|-------------------------------------------|
-| “BD, come here”      | Detects person, walks to them, beeps happily |
-| “What do you see?”       | Captions image and plays curious beep     |
-| “Turn around”            | Executes a 180° turn with dramatic beep   |
-| “Wave hello!”            | Plays a friendly wave beep emote          |
-| “Look at the red ball”   | Turns head toward object, plays beep      |
+| "BD, come here"      | Detects person, walks to them, beeps happily |
+| "What do you see?"       | Captions image and plays curious beep     |
+| "Turn around"            | Executes a 180° turn with dramatic beep   |
+| "Wave hello!"            | Plays a friendly wave beep emote          |
+| "Look at the red ball"   | Turns head toward object, plays beep      |
+
+---
+
+## 📊 System Architecture
+
+```mermaid
+graph TD
+    A[Audio Input] -->|Speech to Text| B[Intent Parser]
+    C[Camera Input] -->|Object Detection| D[Vision System]
+    D -->|Image Captioning| E[Scene Understanding]
+    B -->|Commands| F[Decision Loop]
+    E -->|Visual Context| F
+    F -->|Movement Commands| G[Motion Controller]
+    F -->|Sound Commands| H[Emote Controller]
+    G -->|Joystick API| I[Duck Movement]
+    H -->|Sound Files| J[Audio Output]
+    
+    subgraph "Simulation Mode"
+    K[OpenDuckPlayground] <-->|Joystick Interface| G
+    L[Test Images] -->|Mock Camera| C
+    M[Test Audio] -->|Mock Microphone| A
+    end
+```
 
 ---
 
 ## ✅ Roadmap
 
+- [x] Update Python dependency to 3.10+ (required by playground)
+- [x] Create simulation tests
 - [ ] Integrate Moondream for on-device image captioning
 - [ ] Use Vosk for offline STT
 - [ ] Build rule-based intent parser for basic commands
@@ -116,7 +202,7 @@ duck_vla/
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.10+
 - Radxa Zero 3W (8GB RAM recommended)
 - Arducam camera
 - Microphone + speaker

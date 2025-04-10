@@ -53,6 +53,11 @@ def parse_arguments():
         action="store_true", 
         help="Disable camera input"
     )
+    parser.add_argument(
+        "--no-cli", 
+        action="store_true", 
+        help="Disable CLI for direct command input"
+    )
     
     return parser.parse_args()
 
@@ -69,13 +74,15 @@ def main():
     logger.info(f"Running in {'simulation' if args.simulate else 'real'} mode")
     logger.info(f"Audio input/output {'disabled' if args.no_audio else 'enabled'}")
     logger.info(f"Camera input {'disabled' if args.no_camera else 'enabled'}")
+    logger.info(f"CLI controller {'disabled' if args.no_cli else 'enabled'}")
     
     try:
         # Create and run the main decision loop
         decision_loop = DecisionLoop(
             simulate=args.simulate,
             audio_enabled=not args.no_audio,
-            camera_enabled=not args.no_camera
+            camera_enabled=not args.no_camera,
+            cli_enabled=not args.no_cli
         )
         
         logger.info("Decision loop initialized, starting main loop")
