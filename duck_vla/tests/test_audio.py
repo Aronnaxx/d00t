@@ -7,12 +7,13 @@ import wave
 import numpy as np
 
 # Add project root to sys.path
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 try:
     from duck_vla.sounds.audio import AudioPlayer, AudioRecorder, find_beep_file
+
     AUDIO_UTILS_AVAILABLE = True
 except ImportError as e:
     logging.warning(f"Could not import audio utils, audio tests will be skipped: {e}")
@@ -22,7 +23,9 @@ except Exception as e:
     AUDIO_UTILS_AVAILABLE = False
 
 # Configure logging for tests
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 # Define path for test audio files
@@ -30,11 +33,12 @@ TEST_SOUNDS_DIR = os.path.join(project_root, "duck_vla", "tests", "test_sounds")
 TEST_RECORDING_FILE = os.path.join(TEST_SOUNDS_DIR, "test_recording.wav")
 TEST_BEEP_FILE = os.path.join(TEST_SOUNDS_DIR, "test_beep.wav")
 
+
 # Helper function to create a dummy WAV file
 def create_dummy_wav(filename, duration=0.1, samplerate=16000, channels=1, sampwidth=2):
     logger.debug(f"Creating dummy WAV file: {filename}")
     os.makedirs(os.path.dirname(filename), exist_ok=True)
-    with wave.open(filename, 'wb') as wf:
+    with wave.open(filename, "wb") as wf:
         wf.setnchannels(channels)
         wf.setsampwidth(sampwidth)
         wf.setframerate(samplerate)
@@ -48,12 +52,14 @@ def create_dummy_wav(filename, duration=0.1, samplerate=16000, channels=1, sampw
         wf.writeframes(silence.tobytes())
     logger.debug(f"Dummy WAV file created: {filename}")
 
+
 # Create necessary files/dirs for tests
 if AUDIO_UTILS_AVAILABLE:
     create_dummy_wav(TEST_BEEP_FILE)
     # Clean up old recording if it exists
     if os.path.exists(TEST_RECORDING_FILE):
         os.remove(TEST_RECORDING_FILE)
+
 
 @unittest.skipIf(not AUDIO_UTILS_AVAILABLE, "Audio utils or dependencies not available")
 class TestAudio(unittest.TestCase):
@@ -70,16 +76,18 @@ class TestAudio(unittest.TestCase):
             logger.info("AudioPlayer and AudioRecorder initialized successfully.")
         except Exception as e:
             logger.exception("Failed to initialize AudioPlayer/Recorder in setUpClass")
-            if cls.player: cls.player.close()
-            if cls.recorder: cls.recorder.close()
+            if cls.player:
+                cls.player.close()
+            if cls.recorder:
+                cls.recorder.close()
             raise unittest.SkipTest(f"Skipping audio tests due to initialization failure: {e}")
 
     @classmethod
     def tearDownClass(cls):
         logger.info("Tearing down TestAudio class...")
-        if hasattr(cls, 'player') and cls.player:
+        if hasattr(cls, "player") and cls.player:
             cls.player.close()
-        if hasattr(cls, 'recorder') and cls.recorder:
+        if hasattr(cls, "recorder") and cls.recorder:
             cls.recorder.close()
         # Clean up test files
         logger.debug("Cleaning up test audio files...")
@@ -90,17 +98,17 @@ class TestAudio(unittest.TestCase):
             except OSError as e:
                 logger.error(f"Error removing test recording file: {e}")
         if os.path.exists(TEST_BEEP_FILE):
-             try:
+            try:
                 os.remove(TEST_BEEP_FILE)
                 logger.debug(f"Removed {TEST_BEEP_FILE}")
-             except OSError as e:
-                 logger.error(f"Error removing test beep file: {e}")
+            except OSError as e:
+                logger.error(f"Error removing test beep file: {e}")
         if os.path.exists(TEST_SOUNDS_DIR) and not os.listdir(TEST_SOUNDS_DIR):
-             try:
-                 os.rmdir(TEST_SOUNDS_DIR)
-                 logger.debug(f"Removed empty directory: {TEST_SOUNDS_DIR}")
-             except OSError as e:
-                 logger.error(f"Error removing test sounds directory: {e}")
+            try:
+                os.rmdir(TEST_SOUNDS_DIR)
+                logger.debug(f"Removed empty directory: {TEST_SOUNDS_DIR}")
+            except OSError as e:
+                logger.error(f"Error removing test sounds directory: {e}")
 
     def test_01_initialization(self):
         """Test if player and recorder objects were initialized."""
@@ -114,7 +122,9 @@ class TestAudio(unittest.TestCase):
         logger.debug("Running test_02_find_beep_file...")
         # We created a dummy beep in the test_sounds dir
         found_path = find_beep_file("test_beep", sounds_dir=TEST_SOUNDS_DIR)
-        self.assertEqual(found_path, TEST_BEEP_FILE, f"Should find the dummy beep file at {TEST_BEEP_FILE}")
+        self.assertEqual(
+            found_path, TEST_BEEP_FILE, f"Should find the dummy beep file at {TEST_BEEP_FILE}"
+        )
         logger.info(f"Found beep file: {found_path}")
 
         # Test finding a non-existent file
@@ -142,7 +152,7 @@ class TestAudio(unittest.TestCase):
     def test_04_record_audio(self):
         """Test recording a short audio clip."""
         logger.debug("Running test_04_record_audio...")
-        record_duration = 0.5 # seconds - keep it short
+        record_duration = 0.5  # seconds - keep it short
 
         if os.path.exists(TEST_RECORDING_FILE):
             logger.warning(f"Removing existing test recording file: {TEST_RECORDING_FILE}")
@@ -156,25 +166,40 @@ class TestAudio(unittest.TestCase):
             logger.info("Recording stopped.")
 
             # Check if the file was created
-            self.assertTrue(os.path.exists(TEST_RECORDING_FILE), f"Recording file was not created at {TEST_RECORDING_FILE}")
+            self.assertTrue(
+                os.path.exists(TEST_RECORDING_FILE),
+                f"Recording file was not created at {TEST_RECORDING_FILE}",
+            )
             logger.info(f"Recording file created: {TEST_RECORDING_FILE}")
 
             # Optional: Check file size or basic WAV properties
             file_size = os.path.getsize(TEST_RECORDING_FILE)
-            self.assertGreater(file_size, 44, "WAV file should be larger than header size") # 44 bytes is typical WAV header
+            self.assertGreater(
+                file_size, 44, "WAV file should be larger than header size"
+            )  # 44 bytes is typical WAV header
             logger.info(f"Recording file size: {file_size} bytes")
 
             # Verify WAV header (basic checks)
-            with wave.open(TEST_RECORDING_FILE, 'rb') as wf:
-                self.assertEqual(wf.getnchannels(), self.recorder.channels, "Channel count mismatch")
+            with wave.open(TEST_RECORDING_FILE, "rb") as wf:
+                self.assertEqual(
+                    wf.getnchannels(), self.recorder.channels, "Channel count mismatch"
+                )
                 self.assertEqual(wf.getframerate(), self.recorder.rate, "Sample rate mismatch")
-                self.assertEqual(wf.getsampwidth(), self.recorder.sample_format_width, "Sample width mismatch")
+                self.assertEqual(
+                    wf.getsampwidth(), self.recorder.sample_format_width, "Sample width mismatch"
+                )
                 n_frames = wf.getnframes()
                 expected_frames = int(record_duration * self.recorder.rate)
                 # Allow some tolerance for timing variations
-                self.assertAlmostEqual(n_frames / self.recorder.rate, record_duration, delta=0.1, msg="Recorded duration mismatch")
-                logger.info(f"WAV properties verified: {wf.getnchannels()}ch, {wf.getframerate()}Hz, {wf.getsampwidth()}bytes/sample, {n_frames} frames")
-
+                self.assertAlmostEqual(
+                    n_frames / self.recorder.rate,
+                    record_duration,
+                    delta=0.1,
+                    msg="Recorded duration mismatch",
+                )
+                logger.info(
+                    f"WAV properties verified: {wf.getnchannels()}ch, {wf.getframerate()}Hz, {wf.getsampwidth()}bytes/sample, {n_frames} frames"
+                )
 
         except Exception as e:
             # Catch specific audio device errors if possible
@@ -189,7 +214,7 @@ class TestAudio(unittest.TestCase):
             self.fail(f"Audio recording raised an exception: {e}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     logger.info("Starting audio tests...")
     unittest.main()
-    logger.info("Audio tests finished.") 
+    logger.info("Audio tests finished.")

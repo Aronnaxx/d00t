@@ -76,3 +76,20 @@ pythonpath = [
 testpaths = [
     "duck_vla/tests",
 ]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | \.mypy_cache
+  | \.tox
+  | \.pytest_cache
+  | __pycache__
+  | build
+  | dist
+)/
+'''

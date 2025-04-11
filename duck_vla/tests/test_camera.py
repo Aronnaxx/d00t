@@ -5,12 +5,13 @@ import os
 import numpy as np
 
 # Add project root to sys.path to allow importing duck_vla modules
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 try:
     from duck_vla.camera.arducam_capture import ArducamCapture
+
     CAMERA_AVAILABLE = True
 except ImportError as e:
     logging.warning(f"Could not import ArducamCapture, camera tests will be skipped: {e}")
@@ -22,8 +23,11 @@ except Exception as e:
 
 
 # Configure logging for tests
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
+
 
 @unittest.skipIf(not CAMERA_AVAILABLE, "ArducamCapture or dependencies not available")
 class TestCamera(unittest.TestCase):
@@ -38,14 +42,14 @@ class TestCamera(unittest.TestCase):
             logger.info("ArducamCapture initialized successfully for testing.")
         except Exception as e:
             logger.exception("Failed to initialize ArducamCapture in setUpClass")
-            cls.camera = None # Ensure camera is None if initialization fails
+            cls.camera = None  # Ensure camera is None if initialization fails
             raise unittest.SkipTest(f"Skipping camera tests due to initialization failure: {e}")
 
     @classmethod
     def tearDownClass(cls):
         """Clean up camera resources after all tests."""
         logger.info("Tearing down TestCamera class...")
-        if hasattr(cls, 'camera') and cls.camera is not None:
+        if hasattr(cls, "camera") and cls.camera is not None:
             try:
                 cls.camera.close()
                 logger.info("Camera closed successfully.")
@@ -83,12 +87,15 @@ class TestCamera(unittest.TestCase):
             self.assertIsInstance(metadata, dict, "Metadata should be a dictionary")
             logger.info(f"Camera metadata retrieved: {metadata}")
             # Add more specific checks if needed, e.g., presence of certain keys
-            self.assertIn('SensorResolution', metadata, "'SensorResolution' key missing in metadata")
+            self.assertIn(
+                "SensorResolution", metadata, "'SensorResolution' key missing in metadata"
+            )
         except Exception as e:
             logger.exception("Error getting metadata")
             self.fail(f"get_metadata raised an exception: {e}")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     logger.info("Starting camera tests...")
     unittest.main()
-    logger.info("Camera tests finished.") 
+    logger.info("Camera tests finished.")
