@@ -143,6 +143,18 @@ def setup_ollama_model(model_name="gemma3", debug=False):
     """Set up the specified Ollama model."""
     logger.info(f"Setting up Ollama model: {model_name}")
     
+    # Map vision model names to Ollama model names if needed
+    model_mapping = {
+        "gemma3": "gemma3:latest",
+        "gemma": "gemma:latest",
+        "llama3": "llama3:latest",
+        "llama": "llama3:latest",
+    }
+    
+    # Get the actual Ollama model name to use
+    ollama_model = model_mapping.get(model_name, model_name)
+    logger.debug(f"Mapped model name '{model_name}' to Ollama model '{ollama_model}'")
+    
     try:
         import ollama
         client = ollama.Client()
@@ -150,20 +162,23 @@ def setup_ollama_model(model_name="gemma3", debug=False):
         # Check if model exists
         models = client.list()
         model_exists = False
-        model_base = model_name.split(':')[0]
         
-        if "models" in models:
-            for model in models["models"]:
-                if "name" in model and model_base in model["name"]:
-                    logger.info(f"Ollama model '{model_name}' already exists")
+        if isinstance(models, dict) and 'models' in models:
+            for model in models['models']:
+                if isinstance(model, dict) and 'name' in model and ollama_model in model['name']:
+                    logger.info(f"Ollama model '{ollama_model}' already exists")
                     model_exists = True
                     break
         
         # Pull model if needed
         if not model_exists:
-            logger.info(f"Pulling Ollama model '{model_name}'...")
-            client.pull(model_name)
-            logger.info(f"Successfully pulled model '{model_name}'")
+            logger.info(f"Pulling Ollama model '{ollama_model}'...")
+            client.pull(ollama_model)
+            logger.info(f"Successfully pulled model '{ollama_model}'")
+        
+        # Set environment variable so other components know which model to use
+        os.environ["DUCK_LLM_MODEL"] = ollama_model
+        logger.debug(f"Set environment variable DUCK_LLM_MODEL={ollama_model}")
         
         return True
         

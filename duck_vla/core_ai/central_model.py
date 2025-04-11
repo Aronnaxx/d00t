@@ -48,7 +48,7 @@ Respond in python code ONLY. Don't use any loops, if statements, or indentation 
     def __init__(
         self,
         provider_type: str = "ollama",
-        model_name: Optional[str] = "gemma:latest",
+        model_name: Optional[str] = None,
         system_prompt: Optional[str] = None,
         action_prompt: Optional[str] = None,
         debug_mode: bool = False,
@@ -73,8 +73,17 @@ Respond in python code ONLY. Don't use any loops, if statements, or indentation 
         
         # Initialize LLM provider
         self.provider_type = provider_type
-        self.model_name = model_name
-        logger.info(f"Initializing {provider_type} provider with model: {model_name}")
+        
+        # Use a default model name if none provided
+        if model_name is None:
+            if provider_type.lower() == "ollama":
+                self.model_name = "gemma3:latest"
+            else:
+                self.model_name = "gemma3:latest"  # Default for all providers
+        else:
+            self.model_name = model_name
+            
+        logger.info(f"Initializing {provider_type} provider with model: {self.model_name}")
         
         self._initialize_provider()
     
@@ -104,11 +113,40 @@ Respond in python code ONLY. Don't use any loops, if statements, or indentation 
                 
                 # Check if model is in the list of available models
                 models = self.llm_provider.get_models()
+                if not models:
+                    logger.warning("No models found via API. Checking if model exists via CLI...")
+                    # Try directly checking if the model exists using CLI
+                    try:
+                        import subprocess
+                        result = subprocess.run(["ollama", "list"], capture_output=True, text=True)
+                        if result.returncode == 0:
+                            output = result.stdout
+                            if self.model_name in output:
+                                logger.info(f"Model {self.model_name} found via CLI command")
+                                return
+                    except Exception as cli_error:
+                        logger.error(f"Error checking model via CLI: {cli_error}")
+                
+                # If we reach here, we need to check explicitly
                 if self.model_name not in models:
-                    logger.warning(f"Model {self.model_name} not found in available models")
-                    logger.info(f"Available models: {', '.join(models)}")
+                    logger.warning(f"Model {self.model_name} not found in available models: {', '.join(models)}")
                     logger.info(f"Attempting to pull model {self.model_name}...")
-                    self.llm_provider.pull_model()
+                    # Use CLI method for more reliable pulling
+                    try:
+                        import subprocess
+                        logger.info(f"Pulling model via CLI: ollama pull {self.model_name}")
+                        pull_process = subprocess.run(["ollama", "pull", self.model_name], 
+                                                     capture_output=True, text=True)
+                        if pull_process.returncode == 0:
+                            logger.info(f"Successfully pulled model {self.model_name}")
+                        else:
+                            logger.error(f"Failed to pull model via CLI: {pull_process.stderr}")
+                            # Fall back to API method
+                            self.llm_provider.pull_model()
+                    except Exception as cli_error:
+                        logger.error(f"Error pulling model via CLI: {cli_error}")
+                        # Fall back to API method
+                        self.llm_provider.pull_model()
                 
         except Exception as e:
             logger.error(f"Failed to initialize LLM provider: {e}")

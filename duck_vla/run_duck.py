@@ -142,14 +142,20 @@ def main():
     if onnx_model_path:
         os.environ["DUCK_ONNX_MODEL"] = onnx_model_path
     
+    # Get LLM model from environment variable if not provided
+    llm_model = args.llm_model or os.environ.get("DUCK_LLM_MODEL")
+    if not llm_model and args.llm_provider == "ollama":
+        # Default to gemma3:latest for Ollama
+        llm_model = "gemma3:latest"
+    
     logger.info("Starting Duck VLA system...")
     logger.info(f"Running in {'simulation' if args.simulate else 'real'} mode")
     logger.info(f"Audio input/output {'disabled' if args.no_audio else 'enabled'}")
     logger.info(f"Camera input {'disabled' if args.no_camera else 'enabled'}")
     logger.info(f"CLI controller {'disabled' if args.no_cli else 'enabled'}")
     logger.info(f"LLM provider: {args.llm_provider}")
-    if args.llm_model:
-        logger.info(f"LLM model: {args.llm_model}")
+    if llm_model:
+        logger.info(f"LLM model: {llm_model}")
     logger.info(f"Vision model: {vision_model or os.environ.get('DUCK_VISION_MODEL', 'gemma3')}")
     if onnx_model_path or os.environ.get("DUCK_ONNX_MODEL"):
         logger.info(f"ONNX model: {onnx_model_path or os.environ.get('DUCK_ONNX_MODEL')}")
@@ -164,7 +170,7 @@ def main():
             vision_model=vision_model,
             onnx_model_path=onnx_model_path,
             llm_provider=args.llm_provider,
-            llm_model=args.llm_model,
+            llm_model=llm_model,
             system_prompt=args.system_prompt
         )
         

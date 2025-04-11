@@ -11,6 +11,8 @@ import threading
 import time
 import queue
 import re
+import sys
+import traceback
 from typing import Optional, Dict, Any, Callable, List, Tuple
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,10 @@ class CLIController(cmd.Cmd):
         # Movement controller for direct commands
         self.movement = None
         
+        # Configure line ending handling
+        self.use_rawinput = True  # Use Python's raw_input which handles line endings
+        self.stdin = sys.stdin     # Ensure we're using the right input stream
+        
         logger.debug("CLI controller initialized")
         logger.info("CLI controller initialized")
         
@@ -84,14 +90,21 @@ class CLIController(cmd.Cmd):
         """Run the CLI loop in a separate thread."""
         while self.running:
             try:
+                # Use a custom cmdloop to ensure proper line ending handling
                 self.cmdloop()
                 break
             except KeyboardInterrupt:
                 print("\nKeyboard interrupt. Type 'exit' or 'quit' to exit.")
             except Exception as e:
                 logger.error(f"Error in CLI loop: {e}")
+                logger.error(traceback.format_exc())  # Log full traceback for debugging
                 time.sleep(1)  # Prevent fast-spinning on error
-                
+    
+    def precmd(self, line):
+        """Process command line before execution and strip any unexpected characters."""
+        # Strip carriage returns and other whitespace
+        return line.strip()
+        
     def set_central_model(self, central_model):
         """Set the central model for processing natural language"""
         self.central_model = central_model
@@ -125,15 +138,88 @@ class CLIController(cmd.Cmd):
         Returns:
             True to continue, False to stop
         """
+        # Strip any carriage returns or unexpected characters
+        line = line.strip()
+        
+        if not line:
+            return True
+            
         # Check if central model is available for natural language processing
         if self.central_model:
             try:
-                # Process the line as natural language
-                response = self.central_model.process_natural_language(line)
-                print(response)
+                logger.info(f"Processing command: '{line}'")
+                print(f"Processing: {line}")
+                
+                # Set a timeout for the entire operation
+                max_total_time = 40  # Total seconds to wait for complete operation
+                operation_start = time.time()
+                
+                # Process the line as natural language with stream=False to avoid hanging
+                response = self.central_model.process_command(line, stream=False)
+                
+                # If we've taken too long already, bail out
+                if time.time() - operation_start > max_total_time:
+                    logger.warning(f"Command processing timed out after {max_total_time} seconds")
+                    print("\n[Command processing timed out]")
+                    return True
+                
+                # Handle generator responses (streaming)
+                if hasattr(response, '__iter__') and hasattr(response, '__next__'):
+                    logger.debug("Got streaming response, consuming generator")
+                    collected_response = ""
+                    try:
+                        # Add a timeout mechanism to prevent infinite loops
+                        max_wait_time = 30  # seconds
+                        start_time = time.time()
+                        
+                        for chunk in response:
+                            collected_response += chunk
+                            # For interactive experience, print chunks as they arrive
+                            print(chunk, end="", flush=True)
+                            
+                            # Check if we've been waiting too long
+                            if time.time() - start_time > max_wait_time:
+                                logger.warning(f"Response streaming timed out after {max_wait_time} seconds")
+                                print("\n[Response timed out]")
+                                break
+                                
+                            # Also check overall operation time
+                            if time.time() - operation_start > max_total_time:
+                                logger.warning(f"Total operation timed out after {max_total_time} seconds")
+                                print("\n[Operation timed out]")
+                                break
+                        
+                        print()  # Add newline at the end
+                    except Exception as e:
+                        logger.error(f"Error consuming response stream: {e}")
+                        print(f"\nError in response stream: {e}")
+                    
+                    # Execute the code if it's valid Python
+                    if collected_response and self.movement:
+                        try:
+                            logger.debug(f"Executing response as code: {collected_response}")
+                            exec(collected_response)
+                        except Exception as e:
+                            logger.error(f"Error executing code: {e}")
+                            print(f"Error executing response as code: {e}")
+                else:
+                    # Regular string response
+                    print(response)
+                    
+                    # Execute the code if it's valid Python
+                    if response and self.movement:
+                        try:
+                            logger.debug(f"Executing response as code: {response}")
+                            exec(response)
+                        except Exception as e:
+                            logger.error(f"Error executing code: {e}")
+                            print(f"Error executing response as code: {e}")
+                
+                logger.info("Command processing completed")
                 return True
             except Exception as e:
                 logger.error(f"Error processing natural language: {e}")
+                logger.error(traceback.format_exc())  # Log full traceback
                 print(f"Error: {e}")
                 print("Make sure Ollama is running with 'ollama serve' and a model is pulled.")
                 return True
@@ -395,4 +481,259 @@ class CLIController(cmd.Cmd):
             print("Natural language processing not available.")
             print("Make sure Ollama is running with 'ollama serve' and a model is pulled.")
             
-        return True 
+        return True
+        
+    def do_command(self, arg: str) -> bool:
+        """
+        Process a command using the action prompt template and execute the resulting code.
+        
+        Usage: command <instruction>
+        
+        Examples:
+            command walk forward for 2 seconds
+            command turn around in a circle
+        """
+        if not arg:
+            print("Error: Command required.")
+            return True
+            
+        if not self.central_model:
+            print("Error: Central model not available.")
+            return True
+            
+        try:
+            # Process the command and get Python code
+            logger.debug(f"Processing command: {arg}")
+            response = self.central_model.process_command(arg, stream=True)
+            
+            # Handle streaming response
+            collected_code = ""
+            print("Response:")
+            
+            # Add a timeout mechanism to prevent infinite loops
+            max_wait_time = 30  # seconds
+            start_time = time.time()
+            
+            for chunk in response:
+                collected_code += chunk
+                print(chunk, end="", flush=True)
+                
+                # Check if we've been waiting too long
+                if time.time() - start_time > max_wait_time:
+                    logger.warning(f"Response streaming timed out after {max_wait_time} seconds")
+                    print("\n[Response timed out]")
+                    break
+                    
+            print("\n")
+            
+            # Execute the generated code if movement controller is available
+            if self.movement and collected_code:
+                try:
+                    logger.debug(f"Executing code: {collected_code}")
+                    print("Executing...")
+                    exec(collected_code)
+                    print("Done.")
+                except Exception as e:
+                    logger.error(f"Error executing code: {e}")
+                    print(f"Error executing code: {e}")
+            elif not self.movement:
+                print("Warning: Movement controller not available. Code not executed.")
+                
+            return True
+        except Exception as e:
+            logger.error(f"Error processing command: {e}")
+            print(f"Error: {e}")
+            return True
+        
+    def do_show_model(self, arg: str) -> bool:
+        """
+        Show information about the current model.
+        
+        Usage: show_model
+        """
+        if not self.central_model:
+            print("Error: Central model not available.")
+            return True
+            
+        print(f"Provider: {self.central_model.provider_type}")
+        print(f"Model: {self.central_model.model_name}")
+        print(f"Provider available: {self.central_model.llm_provider is not None}")
+        
+        if self.central_model.llm_provider:
+            models = self.central_model.llm_provider.get_models()
+            print(f"Available models: {', '.join(models) if models else 'None'}")
+            
+        return True
+        
+    def do_check_ollama(self, arg: str) -> bool:
+        """
+        Check if Ollama is running and available.
+        
+        Usage: check_ollama
+        """
+        try:
+            import ollama
+            import subprocess
+            
+            client = ollama.Client()
+            print("Checking Ollama connection...")
+            
+            # First try API method
+            try:
+                response = client.list()
+                print("Ollama API is running!")
+                
+                # Check models via API
+                if isinstance(response, dict) and 'models' in response:
+                    models = response['models']
+                    if models:
+                        print(f"Found {len(models)} models via API:")
+                        for model in models:
+                            if isinstance(model, dict) and 'name' in model:
+                                print(f"  - {model['name']}")
+                    else:
+                        print("No models found via API.")
+                else:
+                    print("No models available via API.")
+                    
+                # Now try CLI method as a backup
+                print("\nChecking via CLI command (more reliable):")
+                try:
+                    result = subprocess.run(["ollama", "list"], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        print("Models found via CLI:")
+                        output_lines = result.stdout.strip().split('\n')
+                        # Skip header line
+                        for line in output_lines[1:]:
+                            # Split by whitespace and get first column (model name)
+                            if line.strip():
+                                parts = line.split()
+                                if parts:
+                                    model_name = parts[0]
+                                    print(f"  - {model_name}")
+                        
+                        # Tell the user which to pull if gemma3:latest isn't found
+                        if not any("gemma3:latest" in line for line in output_lines):
+                            print("\ngemma3:latest model not found. Pull with: ollama pull gemma3:latest")
+                    else:
+                        print(f"Error running 'ollama list': {result.stderr}")
+                except Exception as e:
+                    print(f"Error checking models via CLI: {e}")
+                    
+            except Exception as e:
+                print(f"Error connecting to Ollama API: {e}")
+                print("Make sure Ollama server is running with: ollama serve")
+                
+                # Try CLI as fallback
+                try:
+                    result = subprocess.run(["ollama", "list"], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        print("\nModels found via CLI:")
+                        print(result.stdout)
+                    else:
+                        print(f"Error running 'ollama list': {result.stderr}")
+                except Exception as cli_error:
+                    print(f"Error checking models via CLI: {cli_error}")
+                
+        except ImportError:
+            print("Ollama package not installed.")
+            print("Install with: pip install ollama")
+            
+        return True
+        
+    def do_pull_model(self, arg: str) -> bool:
+        """
+        Pull an Ollama model.
+        
+        Usage: pull_model [model_name]
+        
+        If model_name is not provided, it will pull the current model.
+        
+        Examples:
+            pull_model
+            pull_model gemma3:latest
+            pull_model llama3:latest
+        """
+        model_name = arg.strip() if arg.strip() else None
+        
+        if not self.central_model:
+            print("Error: Central model not available.")
+            return True
+            
+        if not self.central_model.llm_provider:
+            print("Error: LLM provider not available.")
+            return True
+            
+        # Use current model if not specified
+        if not model_name:
+            model_name = self.central_model.model_name
+            
+        print(f"Pulling model: {model_name}...")
+        
+        try:
+            success = self.central_model.llm_provider.pull_model() if not model_name else False
+            
+            # If we're using a different model than the current one, create a temporary provider
+            if model_name and model_name != self.central_model.model_name:
+                from duck_vla.core_ai.llm_provider import LLMProviderFactory
+                temp_provider = LLMProviderFactory.create_provider(
+                    provider_type=self.central_model.provider_type,
+                    model_name=model_name
+                )
+                success = temp_provider.pull_model()
+                
+            if success:
+                print(f"Successfully pulled model: {model_name}")
+                # Update the current model if requested
+                if model_name != self.central_model.model_name:
+                    switch = input(f"Switch to model {model_name}? (y/n): ").lower()
+                    if switch.startswith('y'):
+                        if self.central_model.switch_model(model_name):
+                            print(f"Switched to model: {model_name}")
+                        else:
+                            print("Failed to switch model.")
+            else:
+                print(f"Failed to pull model: {model_name}")
+                
+        except Exception as e:
+            logger.error(f"Error pulling model: {e}")
+            print(f"Error: {e}")
+            
+        return True
+        
+    def do_test_llm(self, arg: str) -> bool:
+        """
+        Test the LLM provider with a simple message to check responsiveness.
+        
+        Usage: test_llm
+        """
+        if not self.central_model:
+            print("Error: Central model not available")
+            return True
+            
+        test_message = "Please respond with a single word: hello"
+        print(f"Sending test message to LLM: '{test_message}'")
+        
+        try:
+            # Force non-streaming for this test
+            start_time = time.time()
+            response = self.central_model.process_natural_language(test_message)
+            elapsed = time.time() - start_time
+            
+            print(f"Response received in {elapsed:.2f} seconds:")
+            print(f"{response}")
+            
+            if elapsed > 10.0:
+                print("\nWarning: LLM is responding slowly (>10 seconds)")
+            elif elapsed < 1.0:
+                print("\nLLM responded very quickly - check if it's actually processing requests")
+            else:
+                print("\nLLM response time looks normal")
+                
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error testing LLM: {e}")
+            print(f"Error: {e}")
+            print("Make sure Ollama is running with 'ollama serve' and a model is pulled")
+            return True 

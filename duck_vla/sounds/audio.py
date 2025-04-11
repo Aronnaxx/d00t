@@ -322,3 +322,18 @@ class AudioSystem:
         # Wait for playback to finish
         if self.playing and self.play_thread:
             self.play_thread.join(timeout=1.0)
+
+    def cleanup(self) -> None:
+        """Properly clean up audio resources."""
+        logger.debug("Cleaning up audio system resources")
+        
+        # Stop recording if active
+        if self.recording:
+            self.stop_recording()
+            
+        # Wait for playback to finish
+        if self.playing and self.play_thread:
+            self.play_thread.join(timeout=1.0)
+            
+        # Additional cleanup if needed in the future
+        # (currently no additional resources need cleanup)

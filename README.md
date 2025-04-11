@@ -1,24 +1,113 @@
 # Duck VLA Unified Runner (DOOT)
 
-A simplified single-file solution for running the Duck VLA system with MuJoCo simulation.
+DOOT consolidates all Duck VLA simulation functionality into a single command-line tool. It focuses on MuJoCo inference simulation with options for various configurations.
 
-## Quick Start
+## Architecture
 
-Run the Duck VLA simulation with a single command:
+DOOT consists of several key components that work together to provide a comprehensive simulation environment:
+
+```mermaid
+graph TD
+    DOOT[DOOT Runner] --> CLI[CLI Interface]
+    DOOT --> Mujoco[MuJoCo Simulation]
+    
+    CLI --> LLM[LLM Integration]
+    CLI --> Movement[Movement Controller]
+    CLI --> Audio[Audio System]
+    CLI --> Vision[Vision Processing]
+    
+    LLM --> Ollama[Ollama API]
+    
+    Movement --> Mujoco
+    
+    Vision --> Camera[Camera Input]
+    Vision --> VisionModel[Vision Model]
+    
+    Audio --> Microphone[Microphone Input]
+    Audio --> Speaker[Speaker Output]
+    Audio --> Emotes[Emote System]
+    
+    subgraph "Duck VLA Core"
+        LLM
+        Movement
+        Audio
+        Vision
+        Emotes
+    end
+    
+    subgraph "External Dependencies"
+        Ollama
+        Mujoco
+        Camera
+        Microphone
+        Speaker
+    end
+```
+
+## System Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant CLI
+    participant LLM
+    participant Motion
+    participant Simulation
+    
+    User->>CLI: Enter command
+    CLI->>LLM: Process command
+    LLM->>CLI: Return Python code
+    CLI->>Motion: Execute code
+    Motion->>Simulation: Send movement signals
+    Simulation->>User: Visual feedback
+```
+
+## Key Components
+
+- **CLI Controller**: Provides command-line interface for user interaction
+- **Central Model**: Manages interactions with LLMs via Ollama
+- **Movement Controller**: Translates commands into motion
+- **Audio System**: Handles sound input/output and emotes
+- **Vision Processing**: Processes camera input and provides environmental awareness
+
+## Usage
 
 ```bash
-# Basic usage - will auto-detect ONNX model
-uv run doot.py
+# Run with CLI control
+uv run doot.py --cli-mode
 
-# Setup environment first
+# Enable debug logging
+uv run doot.py --cli-mode --debug
+
+# Disable audio/camera
+uv run doot.py --cli-mode --no-audio --no-camera
+
+# Run the Open Duck Playground directly
+uv run doot.py --playground-only
+
+# Set up the environment
 uv run doot.py --setup
-
-# Specify a specific ONNX model
-uv run doot.py --onnx-model path/to/your/model.onnx
-
-# Run with different vision model
-uv run doot.py --vision-model llava
 ```
+
+## CLI Commands
+
+When running in CLI mode, the following commands are available:
+
+- `help` - Display available commands
+- `walk forward` - Walk forward (natural language commands work)
+- `stop` - Stop all movement
+- `check_ollama` - Check Ollama connectivity
+- `status` - Show system status
+- `emote happy` - Express an emotion
+- `exit` / `quit` - Exit the CLI
+
+## Recent Updates
+
+- Fixed streaming response handling to prevent CLI hanging
+- Improved error handling for Ollama API interactions
+- Reduced redundant audio system initialization 
+- Added proper cleanup for audio resources
+- Added timeout mechanisms to prevent infinite loops
 
 ## Features
 
@@ -51,35 +140,6 @@ Environment Setup:
 
 Other options:
   --debug               Enable debug logging
-```
-
-## Architecture
-
-The Duck VLA runner architecture uses the following components:
-
-```mermaid
-graph TD
-    A[doot.py] --> B{Mode Selection}
-    B -->|Default| C[MuJoCo Simulation]
-    B -->|CLI Mode| D[Duck VLA CLI]
-    B -->|Playground Only| E[Open Duck Playground]
-    
-    C --> F[ONNX Model]
-    C --> G[MuJoCo Inference]
-    
-    D --> H[Vision Model]
-    D --> I[CLI Control]
-    
-    subgraph Environment
-        J[Open Duck Playground]
-        K[Ollama]
-        L[ONNX Models]
-    end
-    
-    C -.-> J
-    D -.-> J
-    D -.-> K
-    C -.-> L
 ```
 
 ## Movement Control System

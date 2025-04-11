@@ -20,51 +20,59 @@ class EmoteController:
     This module manages the duck's expressive beeps and sound effects.
     """
     
-    def __init__(self, audio_enabled: bool = True, sounds_dir: Optional[str] = None):
+    def __init__(self, audio_enabled: bool = True, sounds_dir: Optional[str] = None, audio_system: Optional[Any] = None):
         """
         Initialize the emote controller.
         
         Args:
-            audio_enabled: Whether audio output is enabled
-            sounds_dir: Directory containing sound files
+            audio_enabled: Whether to enable audio feedback
+            sounds_dir: Directory containing sound files for emotes
+            audio_system: Existing AudioSystem instance to reuse (optional)
         """
+        from pathlib import Path
+        
         self.audio_enabled = audio_enabled
         
-        # Default sounds directory if not specified
+        # Set up sounds directory
         if sounds_dir is None:
-            sounds_dir = os.path.join(os.path.dirname(__file__), "../sounds")
-        self.sounds_dir = sounds_dir
-        
+            # Default to sounds directory under duck_vla/sounds
+            script_dir = Path(__file__).parent
+            self.sounds_dir = str(script_dir.parent / "sounds")
+        else:
+            self.sounds_dir = sounds_dir
+            
         logger.info(f"Initializing emote controller (audio_enabled={audio_enabled})")
         
-        # Emote sound mappings
+        # Configure sound map - category to filename pattern mapping
         self.sound_map = {
-            "happy": ["happy_1.wav", "happy_2.wav", "happy_3.wav"],
-            "sad": ["sad_1.wav", "sad_2.wav"],
-            "curious": ["curious_1.wav", "curious_2.wav"],
-            "afraid": ["afraid_1.wav", "afraid_2.wav"],
-            "hello": ["hello_1.wav", "hello_2.wav"],
-            "goodbye": ["goodbye_1.wav"],
-            "neutral": ["neutral_1.wav", "neutral_2.wav"],
-            "error": ["error_1.wav", "error_2.wav"],
-            "success": ["success_1.wav"],
-            "processing": ["processing_1.wav"],
-            "warning": ["warning_1.wav"],
+            "happy": ["happy*.wav"],
+            "sad": ["sad*.wav"],
+            "curious": ["curious*.wav", "interest*.wav"],
+            "afraid": ["afraid*.wav", "scared*.wav"],
+            "hello": ["hello*.wav", "greeting*.wav"],
+            "goodbye": ["goodbye*.wav", "bye*.wav"],
+            "neutral": ["neutral*.wav"],
+            "error": ["error*.wav", "warning*.wav"],
+            "success": ["success*.wav", "win*.wav"],
+            "processing": ["processing*.wav", "thinking*.wav"],
+            "warning": ["warning*.wav", "alert*.wav"],
         }
-        
-        # Ensure all required directories exist
-        self._ensure_directories()
         
         # Import audio utilities if enabled
         if audio_enabled:
-            try:
-                from duck_vla.sounds.audio import AudioSystem
-                self.audio_system = AudioSystem()
-                logger.debug("Audio system initialized for emotes")
-            except ImportError as e:
-                logger.warning(f"Failed to initialize audio system for emotes: {e}")
-                self.audio_system = None
-                self.audio_enabled = False
+            if audio_system is not None:
+                # Reuse existing audio system
+                self.audio_system = audio_system
+                logger.debug("Reusing existing audio system for emotes")
+            else:
+                try:
+                    from duck_vla.sounds.audio import AudioSystem
+                    self.audio_system = AudioSystem()
+                    logger.debug("Audio system initialized for emotes")
+                except ImportError as e:
+                    logger.warning(f"Failed to initialize audio system for emotes: {e}")
+                    self.audio_system = None
+                    self.audio_enabled = False
         else:
             logger.info("Audio disabled for emotes")
             self.audio_system = None

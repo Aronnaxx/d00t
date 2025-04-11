@@ -244,16 +244,7 @@ class DecisionLoop:
             logger.info(f"{'Simulated' if self.simulate else 'Real'} movement controller initialized")
             
             # Initialize emote system
-            try:
-                from duck_vla.actions.emotes import EmoteController
-                self.emotes = EmoteController(audio_enabled=self.audio_enabled)
-                logger.info("Emote controller initialized successfully")
-            except ImportError as e:
-                logger.warning(f"Failed to import emote controller: {e}")
-                self.emotes = None
-            except Exception as e:
-                logger.warning(f"Failed to initialize emote controller: {e}")
-                self.emotes = None
+            self._init_emote_components()
             
         except ImportError as e:
             logger.error(f"Failed to import action modules: {e}")
@@ -269,6 +260,22 @@ class DecisionLoop:
         if self.motion is None:
             logger.warning("Motion controller not available - limited functionality")
         
+    def _init_emote_components(self):
+        """Initialize emote components with graceful error handling."""
+        try:
+            from duck_vla.actions.emotes import EmoteController
+            
+            # Pass the existing audio system to avoid duplicate initialization
+            self.emotes = EmoteController(
+                audio_enabled=self.audio_enabled,
+                audio_system=self.audio_system if hasattr(self, 'audio_system') else None
+            )
+            logger.info("Emote controller initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize emote controller: {e}")
+            logger.debug(traceback.format_exc())
+            self.emotes = None
+    
     def run(self) -> None:
         """Run the main decision loop."""
         logger.info("Starting decision loop")
@@ -282,6 +289,19 @@ class DecisionLoop:
             if self.central_model:
                 self.cli.set_central_model(self.central_model)
                 logger.debug("Connected CLI to central model for natural language processing")
+                
+                # Test the LLM provider connection
+                if self.central_model.llm_provider:
+                    try:
+                        logger.info("Testing LLM provider connection...")
+                        models = self.central_model.llm_provider.get_models()
+                        if models:
+                            logger.info(f"LLM provider connection successful. Available models: {', '.join(models[:3])}...")
+                        else:
+                            logger.warning("LLM provider connected but no models available")
+                    except Exception as e:
+                        logger.error(f"Error testing LLM provider: {e}")
+                        logger.error(traceback.format_exc())
             
             # Connect the CLI to the movement controller for direct commands
             if self.motion:
@@ -289,12 +309,39 @@ class DecisionLoop:
                 logger.debug("Connected CLI to movement controller for direct commands")
                 
             self.cli.start()
+            logger.info("CLI controller started successfully")
+        
+        # Track last health check time
+        last_health_check = time.time()
+        health_check_interval = 60  # seconds between health checks
         
         try:
             # Main loop
+            cycle_count = 0
+            loop_start_time = time.time()
+            
             while self.running:
+                cycle_start = time.time()
                 self._process_cycle()
-                time.sleep(0.1)  # Small delay to prevent CPU spinning
+                cycle_duration = time.time() - cycle_start
+                
+                cycle_count += 1
+                if cycle_count % 100 == 0:
+                    total_runtime = time.time() - loop_start_time
+                    avg_cycle_time = total_runtime / cycle_count
+                    logger.info(f"Decision loop stats: {cycle_count} cycles, avg cycle time: {avg_cycle_time:.4f}s")
+                
+                # Periodic health checks
+                current_time = time.time()
+                if current_time - last_health_check > health_check_interval:
+                    self._perform_health_check()
+                    last_health_check = current_time
+                
+                # Adaptive sleep to maintain consistent cycle time
+                # Aim for ~10Hz update rate with a minimum of 5ms sleep
+                target_cycle_time = 0.1  # 100ms per cycle
+                sleep_time = max(0.005, target_cycle_time - cycle_duration)
+                time.sleep(sleep_time)
                 
         except KeyboardInterrupt:
             logger.info("Received keyboard interrupt, stopping")
@@ -514,3 +561,39 @@ class DecisionLoop:
                 logger.warning(f"Error cleaning up audio system: {e}")
         
         logger.info("Cleanup complete")
+    
+    def _perform_health_check(self):
+        """Perform health checks on critical components."""
+        logger.debug("Performing periodic health check")
+        
+        # Check CLI controller
+        if self.cli_enabled and self.cli:
+            if not self.cli.cli_thread or not self.cli.cli_thread.is_alive():
+                logger.warning("CLI controller thread is not running, attempting restart")
+                try:
+                    self.cli.start()
+                except Exception as e:
+                    logger.error(f"Failed to restart CLI controller: {e}")
+        
+        # Check LLM provider
+        if self.central_model and self.central_model.llm_provider:
+            try:
+                is_available = self.central_model.llm_provider.is_available()
+                if not is_available:
+                    logger.warning("LLM provider is not available, may cause command processing issues")
+            except Exception as e:
+                logger.error(f"Error checking LLM provider health: {e}")
+        
+        # Log overall system status
+        components_status = {
+            "cli": self.cli_enabled and self.cli and self.cli.running,
+            "central_model": self.central_model is not None,
+            "llm_provider": self.central_model and self.central_model.llm_provider and 
+                           self.central_model.llm_provider.is_available() if self.central_model else False,
+            "motion": self.motion is not None,
+            "camera": self.camera_enabled and self.camera is not None,
+            "audio": self.audio_enabled and self.audio_system is not None,
+        }
+        
+        logger.info(f"System health status: {components_status}")
+        return components_status
