@@ -24,18 +24,29 @@ class MujocoConnector:
     and forwarding key commands from the Movement class to the simulation.
     """
 
-    def __init__(self, onnx_model_path: Optional[str] = None, debug: bool = False):
+    def __init__(
+        self,
+        onnx_model_path: Optional[str] = None,
+        debug: bool = False,
+        connect_to_existing: bool = False,
+    ):
         """
         Initialize the Mujoco connector.
 
         Args:
             onnx_model_path: Path to ONNX model to use for simulation
             debug: Enable debug logging
+            connect_to_existing: If True, don't start a new simulation, connect to existing one
         """
         self.debug = debug
+        self.connect_to_existing = connect_to_existing
 
         if debug:
             logger.setLevel(logging.DEBUG)
+
+        # Check if we should connect to an existing simulation
+        if self.connect_to_existing:
+            logger.info("Configured to connect to existing MuJoCo simulation")
 
         # Set default ONNX model path if none is provided
         self.onnx_model_path = onnx_model_path
@@ -99,6 +110,26 @@ class MujocoConnector:
         if self.running:
             logger.warning("Simulation is already running")
             return False
+
+        # If we're configured to connect to an existing simulation, skip starting a new one
+        if self.connect_to_existing:
+            logger.info("Using existing MuJoCo simulation instead of starting new one")
+            self.running = True
+
+            # Set up a mock simulation object with the expected interface
+            # This will allow our code to work without a direct simulation connection
+            # The actual key events will be handled through the movement controller's callback
+            from types import SimpleNamespace
+
+            self.simulation = SimpleNamespace(
+                commands={},
+                head_control_mode=False,
+                key_callback=lambda keycode: logger.debug(
+                    f"Mock key callback with code: {keycode}"
+                ),
+            )
+
+            return True
 
         # Find the absolute paths to the model and reference data
         # Look for the files in the open_duck_playground submodule
@@ -200,19 +231,34 @@ class MujocoConnector:
         and receive updates from the simulation.
 
         Args:
-            movement_controller: The Movement controller to connect
+            movement_controller: Movement controller to connect
 
         Returns:
-            True if controller was connected successfully
+            True if connection was successful
         """
         if not self.running:
-            logger.warning("Cannot connect controller: simulation is not running")
+            logger.error("Simulation not running, can't connect movement controller")
             return False
 
+        if not movement_controller:
+            logger.error("Movement controller is None, can't connect")
+            return False
+
+        # Store the movement controller reference
         self.movement_controller = movement_controller
 
-        # Register our key callback with the movement controller
-        self.movement_controller.register_sim_callback(self.simulation.key_callback)
+        # Register our key_callback with the movement controller
+        # This creates a bidirectional connection - the movement controller can send keys to us,
+        # and we forward them to the simulation
+        if self.connect_to_existing:
+            # When connecting to an existing simulation, the movement controller's callback
+            # is what does the actual work - it sends keyboard events to the window
+            logger.info("Registering movement controller for connecting to existing simulation")
+            # We don't need to register our callback, as the existing window is managed separately
+        else:
+            # When running our own simulation, we need to register our callback
+            logger.info("Registering simulation callback with movement controller")
+            movement_controller.register_sim_callback(self.simulation.key_callback)
 
         logger.info("Movement controller connected to Mujoco simulation")
         return True

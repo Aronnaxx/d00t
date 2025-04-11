@@ -151,12 +151,36 @@ class CLIController(cmd.Cmd):
                 logger.info(f"Processing command: '{line}'")
                 print(f"Processing: {line}")
 
+                # If movement controller is available, log basic movement commands
+                # for common terms to help with debugging
+                if self.movement and line:
+                    # Simple debug check for common move commands
+                    lower_line = line.lower()
+                    if "forward" in lower_line or "ahead" in lower_line:
+                        logger.debug(
+                            "Detected forward movement in command - if this doesn't work, try 'move forward'"
+                        )
+                    elif "backward" in lower_line or "back" in lower_line:
+                        logger.debug(
+                            "Detected backward movement in command - if this doesn't work, try 'move backward'"
+                        )
+                    elif "left" in lower_line:
+                        logger.debug(
+                            "Detected left movement in command - if this doesn't work, try 'turn left'"
+                        )
+                    elif "right" in lower_line:
+                        logger.debug(
+                            "Detected right movement in command - if this doesn't work, try 'turn right'"
+                        )
+
                 # Set a timeout for the entire operation
                 max_total_time = 40  # Total seconds to wait for complete operation
                 operation_start = time.time()
 
-                # Process the line as natural language with stream=False to avoid hanging
-                response = self.central_model.process_command(line, stream=False)
+                # Process the line as natural language with stream=True to show progress
+                response = self.central_model.process_command(line, stream=True)
+
+                print("\n--- Response from LLM ---")
 
                 # If we've taken too long already, bail out
                 if time.time() - operation_start > max_total_time:
@@ -712,32 +736,33 @@ class CLIController(cmd.Cmd):
 
     def do_test_llm(self, arg: str) -> bool:
         """
-        Test the LLM provider with a simple message to check responsiveness.
+        Test the LLM provider with a simple prompt.
 
-        Usage: test_llm
+        Usage: test_llm [prompt]
+
+        Examples:
+            test_llm What is 2+2?
+            test_llm Tell me about ducks
         """
+        if not arg:
+            print("Error: Prompt required.")
+            return True
+
         if not self.central_model:
             print("Error: Central model not available")
             return True
 
-        test_message = "Please respond with a single word: hello"
-        print(f"Sending test message to LLM: '{test_message}'")
-
         try:
-            # Force non-streaming for this test
-            start_time = time.time()
-            response = self.central_model.process_natural_language(test_message)
-            elapsed = time.time() - start_time
+            # Process the prompt through the LLM
+            response = self.central_model.process_natural_language(arg)
+            print(f"Response: {response}")
 
-            print(f"Response received in {elapsed:.2f} seconds:")
-            print(f"{response}")
-
-            if elapsed > 10.0:
-                print("\nWarning: LLM is responding slowly (>10 seconds)")
-            elif elapsed < 1.0:
-                print("\nLLM responded very quickly - check if it's actually processing requests")
+            if len(response) > 100:
+                print("\nWarning: LLM response is longer than 100 characters")
+            elif len(response) < 10:
+                print("\nWarning: LLM response is shorter than 10 characters")
             else:
-                print("\nLLM response time looks normal")
+                print("\nLLM response length looks normal")
 
             return True
 
@@ -746,3 +771,53 @@ class CLIController(cmd.Cmd):
             print(f"Error: {e}")
             print("Make sure Ollama is running with 'ollama serve' and a model is pulled")
             return True
+
+    def do_debug_move(self, arg: str) -> bool:
+        """
+        Send direct debug movement keys to test if movement works.
+
+        Usage: debug_move <direction>
+
+        Options:
+            up - Move forward
+            down - Move backward
+            left - Turn left
+            right - Turn right
+            h - Toggle head mode
+
+        Examples:
+            debug_move up
+            debug_move left
+        """
+        if not arg:
+            print("Error: Please specify a direction (up, down, left, right, h)")
+            return True
+
+        direction = arg.strip().lower()
+
+        if not self.movement:
+            print("Error: Movement controller not available")
+            return True
+
+        # Map direction to key code
+        key_map = {
+            "up": 265,  # KEY_UP
+            "down": 264,  # KEY_DOWN
+            "left": 263,  # KEY_LEFT
+            "right": 262,  # KEY_RIGHT
+            "h": 72,  # KEY_H (toggle head mode)
+            "a": 81,  # KEY_A (roll left/angular left)
+            "e": 69,  # KEY_E (roll right/angular right)
+        }
+
+        if direction in key_map:
+            key_code = key_map[direction]
+            print(f"Sending debug key: {direction} (code {key_code})")
+            # Force xdotool to search for the MuJoCo window and send the key
+            self.movement.simulate_key_press(key_code)
+            print(f"Key sent - Check if the duck responded to {direction}")
+        else:
+            print(f"Unknown direction: {direction}")
+            print("Valid options: up, down, left, right, h, a, e")
+
+        return True

@@ -354,7 +354,11 @@ def run_cli_mode(
     env["PYTHONPATH"] = f"{playground_path}:{env.get('PYTHONPATH', '')}"
     env["DUCK_VISION_MODEL"] = vision_model
     env["DUCK_ONNX_MODEL"] = os.path.abspath(onnx_model_path)
-    env["DUCK_CONNECT_EXISTING"] = "1"  # Flag to connect to existing simulation
+    
+    # Always set DUCK_CONNECT_EXISTING to 1 - this is crucial to prevent two MuJoCo instances
+    # The first one is started by doot.py, the second one should connect to the first
+    env["DUCK_CONNECT_EXISTING"] = "1"
+    logger.debug("Set DUCK_CONNECT_EXISTING=1 to ensure VLA connects to existing MuJoCo")
 
     # Configure verbose vision output if requested
     if verbose_vision:

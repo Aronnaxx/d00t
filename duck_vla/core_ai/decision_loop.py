@@ -111,10 +111,21 @@ class DecisionLoop:
             from duck_vla.actions.movement import Movement
             from duck_vla.actions.mujoco_connector import MujocoConnector
 
+            # Check if we should connect to an existing MuJoCo instance
+            # Look for environment variable that doot.py sets
+            connect_to_existing = os.environ.get("DUCK_CONNECT_EXISTING", "0") == "1"
+
+            if connect_to_existing:
+                logger.info("Connecting to existing MuJoCo instance")
+            else:
+                logger.info("Will start a new MuJoCo instance")
+
             # Initialize the Mujoco connector with the specified ONNX model path
             debug_mode = logger.level == logging.DEBUG
             self.mujoco_connector = MujocoConnector(
-                onnx_model_path=self.onnx_model_path, debug=debug_mode
+                onnx_model_path=self.onnx_model_path,
+                debug=debug_mode,
+                connect_to_existing=connect_to_existing,
             )
             logger.info("Mujoco connector initialized successfully")
 

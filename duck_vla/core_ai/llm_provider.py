@@ -134,9 +134,24 @@ class OllamaProvider(LLMProvider):
         max_tokens: int = 1000,
         stream: bool = False,
     ) -> Union[str, Generator[str, None, None]]:
-        """Generate text using Ollama API"""
+        """
+        Generate text from the prompt.
+
+        Args:
+            prompt: The prompt to generate from
+            system_prompt: Optional system prompt to set the context
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens to generate
+            stream: Whether to stream the response
+
+        Returns:
+            Generated text or a generator if streaming
+        """
         if not self.client:
-            logger.error("Ollama client not available")
+            logger.error("Ollama client not available - check if ollama is running")
+            print(
+                "Ollama client not available - please make sure ollama is running with 'ollama serve'"
+            )
             return (
                 "Error: Ollama client not available"
                 if not stream

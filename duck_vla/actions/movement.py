@@ -11,8 +11,9 @@
 
 import logging
 import time
+import threading
 import os
-from typing import Dict, List, Optional, Tuple, Union, Any
+from typing import Dict, List, Optional, Tuple, Union, Any, Callable
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -534,9 +535,73 @@ class Movement:
             self.sim_key_callback(key_code)
             logger.debug(f"Callback executed for key code: {key_code}")
         else:
-            logger.debug("No simulation callback registered, key press simulation is passive")
+            logger.debug("No simulation callback registered")
 
-            # Log what this key would do according to mujoco_infer.py
+            # Try to send key to external MuJoCo window using keyboard simulation
+            # This is used when connecting to an existing MuJoCo instance
+            connect_to_existing = os.environ.get("DUCK_CONNECT_EXISTING", "0") == "1"
+            if connect_to_existing:
+                try:
+                    import subprocess
+
+                    # Map key codes to letters that xdotool will understand
+                    key_map = {
+                        KEY_UP: "Up",
+                        KEY_DOWN: "Down",
+                        KEY_LEFT: "Left",
+                        KEY_RIGHT: "Right",
+                        KEY_H: "h",
+                        KEY_A: "a",
+                        KEY_E: "e",
+                        KEY_P: "p",
+                        KEY_M: "m",
+                    }
+
+                    if key_code in key_map:
+                        key_name = key_map[key_code]
+
+                        # First find and focus the MuJoCo window
+                        # Try to find a window with "MuJoCo" in the title
+                        window_id = None
+                        try:
+                            # Find all windows with "MuJoCo" in the title
+                            result = subprocess.run(
+                                ["xdotool", "search", "--name", "MuJoCo"],
+                                capture_output=True,
+                                text=True,
+                            )
+
+                            if result.stdout.strip():
+                                # Get the first matching window ID
+                                window_id = result.stdout.strip().split("\n")[0]
+                                logger.debug(f"Found MuJoCo window with ID: {window_id}")
+
+                                # Activate the window
+                                subprocess.run(["xdotool", "windowactivate", window_id])
+                                logger.debug(f"Activated MuJoCo window")
+
+                                # Send the key to that specific window
+                                subprocess.run(["xdotool", "key", "--window", window_id, key_name])
+                                logger.debug(f"Sent key '{key_name}' to MuJoCo window {window_id}")
+                            else:
+                                # Fallback to sending key to active window
+                                logger.debug(
+                                    "MuJoCo window not found, sending key to active window"
+                                )
+                                subprocess.run(["xdotool", "key", key_name])
+                        except Exception as e:
+                            logger.error(f"Failed to find/activate MuJoCo window: {e}")
+                            # Fallback to just sending the key to whatever window is active
+                            subprocess.run(["xdotool", "key", key_name])
+                    else:
+                        logger.warning(f"Unknown key code: {key_code}, can't map to xdotool key")
+
+                except ImportError:
+                    logger.warning("Can't import subprocess, can't send keys to external window")
+                except Exception as e:
+                    logger.error(f"Failed to send key to external window: {e}")
+
+            # Log what this key would do according to mujoco_infer.py (for debugging)
             if key_code == KEY_H:
                 logger.info("Toggle head control mode")
                 self.head_control_mode = not self.head_control_mode
